@@ -3,6 +3,8 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import mammoth from 'mammoth';
 import Tesseract from 'tesseract.js';
 import sharp from 'sharp';
+import XLSX from "xlsx";
+
 
 class ContentExtractorService {
   constructor() {
@@ -21,6 +23,14 @@ class ContentExtractorService {
       docx: [
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/msword',
+        
+      ],
+      excel: [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+        'text/csv',
+        'application/csv',
+  
       ],
     };
   }
@@ -98,16 +108,16 @@ class ContentExtractorService {
       console.log(`  📄 Processing PDF: ${filename}`);
       const text = await this.extractFromPdf(data);
       
-      if (!text || text.trim().length === 0) {
-        console.log('  📸 PDF appears to be fully scanned/image-based, sending to Vision API');
-        const base64 = data.toString('base64');
-        return { 
-          type: 'image', 
-          data: base64,
-          mimeType: 'application/pdf',
-          note: 'Scanned PDF - sent as image for Vision analysis'
-        };
-      }
+      // if (!text || text.trim().length === 0) {
+      //   console.log('  📸 PDF appears to be fully scanned/image-based, sending to Vision API');
+      //   const base64 = data.toString('base64');
+      //   return { 
+      //     type: 'image', 
+      //     data: base64,
+      //     mimeType: 'application/pdf',
+      //     note: 'Scanned PDF - sent as image for Vision analysis'
+      //   };
+      // }
       
       console.log(`  ✅ Extracted ${text.length} characters from PDF (including any embedded images)`);
       return { type: 'text', data: text };
@@ -119,7 +129,12 @@ class ContentExtractorService {
       console.log(`  ✅ Extracted ${text.length} characters from DOCX (including any embedded images)`);
       return { type: 'text', data: text };
     }
-
+    if (this.supportedDocTypes.excel.includes(mimeType) || filename?.endsWith('.xlsx') || filename?.endsWith('.xls') || filename?.endsWith('.csv')) {
+      console.log(`  📄 Processing Excel: ${filename}`);
+      const text = await this.parseExcelAttachment(data);
+      console.log(`  ✅ Extracted ${text.length} characters from Excel`);
+      return { type: 'text', data: text };
+    }
     if (this.supportedImageTypes.includes(mimeType) || this.isImageFile(filename)) {
       
       
@@ -197,26 +212,51 @@ class ContentExtractorService {
       });
       
       const pdfDocument = await loadingTask.promise;
-
+// console.log("pdf Document pages",pdfDocument.numPages);
       for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
         try {
           const page = await pdfDocument.getPage(pageNum);
+          // console.log("before operator",page);
+          
           const operatorList = await page.getOperatorList();
+          // console.log("after operator",operatorList);
           
           for (let i = 0; i < operatorList.fnArray.length; i++) {
             const fn = operatorList.fnArray[i];
+            // console.log("inside loop fn: ",fn);
             
             if (fn === 85 || fn === 86) {
               try {
                 const imgData = operatorList.argsArray[i];
+                // console.log("imgData ", imgData);
+                
                 if (imgData && imgData[0]) {
                   const imgName = imgData[0];
-                  const objs = page.objs;
+                  // const objs = page.objs;
+                  // console.log("objs =====> ", objs);
                   
-                  if (objs._objs && objs._objs[imgName]) {
-                    const imgObj = objs._objs[imgName];
-                    if (imgObj.data && imgObj.data.data) {
-                      const imageBuffer = await this.convertPdfImageToBuffer(imgObj.data);
+                  const imgObj = await new Promise((resolve) => {
+              // Try page-specific objects first
+              page.objs.get(imgName, (obj) => {
+                if (obj) return resolve(obj);
+                
+                // If not in page.objs, check commonObjs
+                page.commonObjs.get(imgName, (commonObj) => {
+                  resolve(commonObj);
+                });
+              });
+            });
+
+
+                  
+                  // if (objs._objs && objs._objs[imgName]) {
+                  //   console.log("objs._objs =====> ",objs._objs);
+                    
+                  //   const imgObj = objs._objs[imgName];
+                    // console.log("imgObj =====> ", imgObj);
+                    if (imgObj.data) {
+                      const imageBuffer = await this.convertPdfImageToBuffer(imgObj);
+                      // console.log("imageBuffer =====> ", imageBuffer);
                       if (imageBuffer) {
                         const ocrText = await this.extractFromImage(imageBuffer);
                         if (ocrText && ocrText.trim().length > 10) {
@@ -226,8 +266,9 @@ class ContentExtractorService {
                       }
                     }
                   }
-                }
+                // }
               } catch (imgError) {
+                console.warn(`    Error processing image on page ${pageNum}:`, imgError.message);
               }
             }
           }
@@ -242,36 +283,82 @@ class ContentExtractorService {
     return imageTexts;
   }
 
-  async convertPdfImageToBuffer(imageData) {
-    try {
-      const { width, height, data } = imageData;
+  // async convertPdfImageToBuffer(imageData) {
+  //   try {
+  //     const { width, height, data } = imageData;
       
-      if (!width || !height || !data) {
-        return null;
-      }
+  //     if (!width || !height || !data) {
+  //       return null;
+  //     }
 
-      const channels = data.length / (width * height);
+  //     const channels = data.length / (width * height);
       
-      if (channels === 4) {
-        return await sharp(Buffer.from(data), {
-          raw: { width, height, channels: 4 }
-        }).png().toBuffer();
-      } else if (channels === 3) {
-        return await sharp(Buffer.from(data), {
-          raw: { width, height, channels: 3 }
-        }).png().toBuffer();
-      } else if (channels === 1) {
-        return await sharp(Buffer.from(data), {
-          raw: { width, height, channels: 1 }
-        }).png().toBuffer();
-      }
+  //     if (channels === 4) {
+  //       return await sharp(Buffer.from(data), {
+  //         raw: { width, height, channels: 4 }
+  //       }).png().toBuffer();
+  //     } else if (channels === 3) {
+  //       return await sharp(Buffer.from(data), {
+  //         raw: { width, height, channels: 3 }
+  //       }).png().toBuffer();
+  //     } else if (channels === 1) {
+  //       return await sharp(Buffer.from(data), {
+  //         raw: { width, height, channels: 1 }
+  //       }).png().toBuffer();
+  //     }
 
-      return null;
-    } catch (error) {
-      return null;
+  //     return null;
+  //   } catch (error) {
+  //     return null;
+  //   }
+  // }
+
+async convertPdfImageToBuffer(imageData) {
+  try {
+    const { width, height, data, kind } = imageData;
+
+    if (!width || !height || !data) return null;
+
+    let processedData = data;
+    let channels = 1;
+
+    // Handle Kind 1: 1-bit per pixel (Black and White)
+    if (kind === 1) {
+      // We need to expand 1 bit into 1 byte (8 bits)
+      const unpackedData = new Uint8Array(width * height);
+      for (let i = 0, n = data.length; i < n; i++) {
+        const byte = data[i];
+        for (let bit = 7; bit >= 0; bit--) {
+          const pixelIndex = i * 8 + (7 - bit);
+          if (pixelIndex < unpackedData.length) {
+            // If bit is 1, set pixel to 255 (white), else 0 (black)
+            unpackedData[pixelIndex] = (byte & (1 << bit)) ? 255 : 0;
+          }
+        }
+      }
+      processedData = unpackedData;
+      channels = 1;
+    } else {
+      // For Kind 2 (RGB) or 3 (RGBA), calculate channels normally
+      channels = data.length / (width * height);
     }
-  }
 
+    // Now use sharp with the processed data
+    return await sharp(Buffer.from(processedData), {
+      raw: {
+        width: width,
+        height: height,
+        channels: channels
+      }
+    })
+    .png()
+    .toBuffer();
+
+  } catch (error) {
+    console.error("Error converting image buffer:", error);
+    return null;
+  }
+}
   
   async extractFromPdfWithPdfjs(buffer) {
     try {
@@ -426,6 +513,26 @@ class ContentExtractorService {
     const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
     return imageExtensions.includes(ext);
   }
+
+ async  parseExcelAttachment(data) {
+
+  // 2. Read workbook
+  const workbook = XLSX.read(data, { type: "buffer" });
+
+ const result = {};
+
+  workbook.SheetNames.forEach((sheetName) => {
+    const worksheet = workbook.Sheets[sheetName];
+
+    result[sheetName] = XLSX.utils.sheet_to_json(worksheet, {
+      defval: "",      // empty cells → ""
+      raw: false,      // formatted text
+      blankrows: false
+    });
+  });
+
+  return JSON.stringify(result, null, 2);
+};
 }
 
 export const contentExtractorService = new ContentExtractorService();

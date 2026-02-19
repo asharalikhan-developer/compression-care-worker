@@ -220,4 +220,3 @@ class GmailService {
 
 export const gmailService = new GmailService();
 export default gmailService;
-

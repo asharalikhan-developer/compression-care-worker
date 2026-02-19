@@ -1,12 +1,19 @@
+import { Worker } from 'bullmq';
 import gmailService from './gmail.service.js';
 import contentExtractorService from './content-extractor.service.js';
 import openaiService from './openai.service.js';
 import config from '../config/index.js';
+import mongoose from 'mongoose';
+
 
 class EmailProcessorService {
   constructor() {
     this.isProcessing = false;
     this.processedEmailIds = new Set();
+    this.mongooseConnected = false;
+    this.ProcessedResult = null;
+    this.worker = null;
+    this.redisConnection = null;
   }
 
 
@@ -16,10 +23,49 @@ class EmailProcessorService {
     await gmailService.initialize();
     openaiService.initialize();
     
+    const mongoUri = process.env.MONGODB_URI;
+    const mongoDbName = process.env.MONGODB_DB || 'compressioncare';
+    const mongoCollectionName = process.env.MONGODB_COLLECTION || 'processed_results';
+
+    if (mongoUri) {
+      try {
+        await mongoose.connect(mongoUri, { dbName: mongoDbName, autoIndex: false });
+        this.mongooseConnected = true;
+        // Flexible schema to store the full result object as-is
+        const ProcessedResultSchema = new mongoose.Schema({}, { strict: false });
+        this.ProcessedResult = mongoose.model('ProcessedResult', ProcessedResultSchema, mongoCollectionName);
+        console.log(`\n✅ Connected to MongoDB via mongoose: ${mongoDbName}.${mongoCollectionName}\n`);
+      } catch (err) {
+        console.warn('⚠️ Failed to connect to MongoDB (mongoose):', err.message);
+        this.mongooseConnected = false;
+      }
+    } else {
+      console.log('ℹ️  MONGODB_URI not configured — skipping MongoDB persistence.');
+    }
+
+    // Setup Redis connection for BullMQ
+    this.redisConnection = {
+      host: config.redis.host,
+      port: config.redis.port,
+      password: config.redis.password,
+    };
+
+    console.log(`\n✅ Redis config loaded: ${config.redis.host}:${config.redis.port}`);
     console.log('\n✅ All services initialized successfully!\n');
     return this;
   }
 
+   async saveResult(result) {
+    if (!this.mongooseConnected || !this.ProcessedResult) return null;
+    try {
+      const doc = await this.ProcessedResult.insertMany(result);
+      console.log(`  💾 Saved result to MongoDB with _id=${doc.length}`);
+      return doc._id;
+    } catch (err) {
+      console.error('  ❌ Failed to save result to MongoDB (mongoose):', err.message);
+      return null;
+    }
+  }
  
   async processEmail(email) {
     console.log(`\n📧 Processing email: "${email.subject}" from ${email.from}`);
@@ -48,13 +94,23 @@ class EmailProcessorService {
       const validation = openaiService.validateExtraction(medicalDetails);
       
       const patientCount = medicalDetails.total_patients_found || medicalDetails.patients?.length || 0;
-      console.log(`  👥 Found ${patientCount} patient(s) in this email`);
+      const shipmentCount = medicalDetails.total_shipments_found || medicalDetails.shipments?.length || 0;
+      console.log(`  👥 Found ${patientCount} patient(s)`);
+      console.log(`  📦 Found ${shipmentCount} shipment(s)`);
       
       if (medicalDetails.patients) {
         medicalDetails.patients.forEach((p, i) => {
           const name = p.patient?.name || 'Unknown';
           const source = p.source || 'Unknown source';
           console.log(`     ${i + 1}. ${name} (from: ${source})`);
+        });
+      }
+      if (medicalDetails.shipments) {
+        medicalDetails.shipments.forEach((s, i) => {
+          const shipper = s.shipper || 'Unknown Shipper';
+          const tracking = s.tracking_number || 'No Tracking';
+          const shipDate = s.ship_date || 'Unknown Date';
+          console.log(`     ${i + 1}. Shipment via ${shipper} on ${shipDate} (Tracking: ${tracking})`);
         });
       }
       
@@ -67,10 +123,12 @@ class EmailProcessorService {
         emailDate: email.date,
         processedAt: new Date().toISOString(),
         totalPatientsFound: patientCount,
+        totalShipmentsFound: shipmentCount,
         extractedData: medicalDetails,
         validation: {
           isValid: validation.isValid,
           totalPatients: validation.totalPatients,
+          totalShipments: validation.totalShipments,
           validationResults: validation.validationResults,
         },
       };
@@ -95,128 +153,127 @@ class EmailProcessorService {
   }
 
 
-  async processUnreadEmails() {
-    if (this.isProcessing) {
-      console.log('⏳ Already processing emails, skipping...');
-      return [];
-    }
-
-    this.isProcessing = true;
-    const results = [];
-
+  /**
+   * Process a single email by its message ID
+   * Fetches email from Gmail API, processes it, and saves to MongoDB
+   */
+  async processEmailById(messageId) {
+    console.log(`📧 Fetching email with ID: ${messageId}`);
+    
     try {
-      console.log('📬 Fetching unread emails...');
-      const emails = await gmailService.getUnreadEmails();
+      const email = await gmailService.getEmailDetails(messageId);
+      const result = await this.processEmail(email);
       
-      if (emails.length === 0) {
-        console.log('📭 No unread emails found.');
-        return results;
+      // Save result to MongoDB if relevant
+      if (result.isRelevant === true) {
+        await this.saveResult([result]);
       }
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ Error processing email ${messageId}:`, error.message);
+      throw error;
+    }
+  }
 
-      console.log(`📨 Found ${emails.length} unread email(s)`);
+  /**
+   * Start BullMQ Worker to listen for message IDs from Redis
+   * This will process emails as they come in from the other server
+   */
+  startWorker() {
+    const queueName = config.redis.queueName;
+    const concurrency = config.processing.concurrency;
 
-      for (const email of emails) {
-        if (this.processedEmailIds.has(email.id)) {
-          console.log(`⏭️  Skipping already processed email: ${email.id}`);
-          continue;
-        }
+    console.log(`\n🔄 Starting BullMQ Worker...`);
+    console.log(`   Queue: ${queueName}`);
+    console.log(`   Concurrency: ${concurrency}`);
+    console.log(`   Redis: ${config.redis.host}:${config.redis.port}\n`);
 
-        const result = await this.processEmail(email);
-        
-        if (result.isRelevant === true) {
-          results.push(result);
-        }
-
-        this.processedEmailIds.add(email.id);
+    this.worker = new Worker(
+      queueName,
+      async (job) => {
+        const messageId = job.data.messageId;
+        console.log(`\n📬 Job ${job.id} received - Message ID: ${messageId}`);
 
         try {
-          await gmailService.markAsRead(email.id);
-          console.log(`  ✓ Marked email as read: ${email.id}`);
+          const result = await this.processEmailById(messageId);
+          
+          console.log(`\n═══════════════════════════════════════════════════════════════`);
+          console.log(`                    JOB COMPLETED: ${job.id}`);
+          console.log(`═══════════════════════════════════════════════════════════════`);
+          console.log(`   Email: ${result.emailSubject || 'N/A'}`);
+          console.log(`   From: ${result.emailFrom || 'N/A'}`);
+          console.log(`   Status: ${result.success ? '✅ Success' : '❌ Failed'}`);
+          console.log(`   Relevant: ${result.isRelevant ? 'Yes' : 'No'}`);
+          
+          if (result.success && result.isRelevant) {
+            if (result.totalPatientsFound) {
+              console.log(`   Patients Found: ${result.totalPatientsFound}`);
+            }
+            if (result.totalShipmentsFound) {
+              console.log(`   Shipments Found: ${result.totalShipmentsFound}`);
+            }
+          }
+          console.log(`───────────────────────────────────────────────────────────────\n`);
+
+          return result;
         } catch (error) {
-          console.error(`  ⚠️ Failed to mark email as read: ${error.message}`);
+          console.error(`❌ Job ${job.id} failed:`, error.message);
+          throw error;
         }
-
-       
+      },
+      {
+        connection: this.redisConnection,
+        concurrency: concurrency,
       }
+    );
 
-      return results;
-    } catch (error) {
-      console.error('Error processing emails:', error.message);
-      throw error;
-    } finally {
-      this.isProcessing = false;
-    }
-  }
-
- 
-  async processEmailById(emailId) {
-    console.log(`📧 Fetching email with ID: ${emailId}`);
-    
-    const email = await gmailService.getEmailDetails(emailId);
-    return this.processEmail(email);
-  }
-
- 
-  startMonitoring(callback) {
-    console.log(`\n🔄 Starting email monitoring (checking every ${config.processing.checkIntervalMs / 1000}s)...\n`);
-    
-    this.processUnreadEmails().then(results => {
-      if (callback && results.length > 0) {
-        callback(results);
-      }
+    // Worker event listeners
+    this.worker.on('completed', (job, result) => {
+      console.log(`✅ Job ${job.id} completed successfully`);
     });
 
-    const intervalId = setInterval(async () => {
-      try {
-        const results = await this.processUnreadEmails();
-        if (callback && results.length > 0) {
-          callback(results);
-        }
-      } catch (error) {
-        console.error('Monitoring error:', error.message);
-      }
-    }, config.processing.checkIntervalMs);
+    this.worker.on('failed', (job, error) => {
+      console.error(`❌ Job ${job?.id} failed:`, error.message);
+    });
 
-    return () => {
-      console.log('🛑 Stopping email monitoring...');
-      clearInterval(intervalId);
-    };
+    this.worker.on('error', (error) => {
+      console.error('❌ Worker error:', error.message);
+    });
+
+    this.worker.on('ready', () => {
+      console.log('🟢 Worker is ready and listening for jobs...\n');
+    });
+
+    return this.worker;
   }
 
-  async processEmailsFromSender(senderEmail, maxResults = 10) {
-    console.log(`📧 Fetching emails from: ${senderEmail}`);
-    
-    const emails = await gmailService.getEmailsFromSender(senderEmail, maxResults);
-    const results = [];
-
-    for (const email of emails) {
-      const result = await this.processEmail(email);
-      if (result.isRelevant === true) {
-        results.push(result);
-      }
+  /**
+   * Stop the BullMQ Worker
+   */
+  async stopWorker() {
+    if (this.worker) {
+      console.log('\n🛑 Stopping BullMQ Worker...');
+      await this.worker.close();
+      this.worker = null;
+      console.log('✅ Worker stopped successfully');
     }
-
-    return results;
   }
 
-  async setupGmailWatch() {
-    const topicName = config.gmail.pubsubTopic || process.env.GMAIL_PUBSUB_TOPIC;
+  /**
+   * Graceful shutdown - close all connections
+   */
+  async shutdown() {
+    console.log('\n🛑 Shutting down Email Processor Service...');
     
-    if (!topicName) {
-      throw new Error('GMAIL_PUBSUB_TOPIC not configured. Please set it in your .env file or config.');
+    await this.stopWorker();
+    
+    if (this.mongooseConnected) {
+      await mongoose.disconnect();
+      console.log('✅ MongoDB disconnected');
     }
-
-    console.log(`\n🔔 Setting up Gmail watch notifications...`);
-    console.log(`📬 Pub/Sub Topic: ${topicName}`);
     
-    const result = await gmailService.setupWatch(topicName);
-    
-    return result;
-  }
-
-  async stopGmailWatch() {
-    console.log(`\n🛑 Stopping Gmail watch notifications...`);
-    await gmailService.stopWatch();
+    console.log('✅ Shutdown complete');
   }
 }
 
