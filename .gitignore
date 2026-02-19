@@ -35,3 +35,5 @@ token.json
 1.json
 
 credentialsv2.json
+
+.env.example
