@@ -4,6 +4,11 @@ import mammoth from 'mammoth';
 import Tesseract from 'tesseract.js';
 import sharp from 'sharp';
 import XLSX from "xlsx";
+import { execFile } from 'child_process';
+import { writeFile, unlink, mkdir, readdir, readFile as fsReadFile } from 'fs/promises';
+import { rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 
 class ContentExtractorService {
@@ -163,6 +168,7 @@ class ContentExtractorService {
   async extractFromPdf(buffer) {
     let textContent = '';
     let imageTexts = [];
+    let isImageBasedPdf = false;
 
     try {
       const data = await pdf(buffer);
@@ -181,14 +187,32 @@ class ContentExtractorService {
       }
     }
 
+    // Check if PDF is image-based (scanned/fax)
+    const textLength = textContent ? textContent.trim().length : 0;
+    if (textLength < 50) {
+      console.log('  📄 PDF appears to be image-based (scanned/fax) - using advanced processing');
+      isImageBasedPdf = true;
+    }
+
     try {
       console.log('  🔍 Scanning PDF for embedded images...');
-      imageTexts = await this.extractImagesFromPdf(buffer);
+      imageTexts = await this.extractImagesFromPdf(buffer, isImageBasedPdf);
       if (imageTexts.length > 0) {
         console.log(`  📸 Found and processed ${imageTexts.length} embedded image(s) in PDF`);
       }
     } catch (error) {
       console.warn('PDF image extraction failed:', error.message);
+    }
+
+    // If image-based PDF and no success with embedded extraction, convert entire pages
+    if (isImageBasedPdf && imageTexts.length === 0) {
+      console.log('  🖼️  Converting PDF pages to images for advanced OCR...');
+      try {
+        const pageTexts = await this.extractFromImageBasedPdf(buffer);
+        imageTexts = pageTexts;
+      } catch (error) {
+        console.warn('PDF page conversion failed:', error.message);
+      }
     }
 
     const allContent = [textContent, ...imageTexts].filter(t => t && t.trim().length > 0);
@@ -201,7 +225,7 @@ class ContentExtractorService {
     return allContent.join('\n\n--- [Image Content] ---\n\n');
   }
 
-  async extractImagesFromPdf(buffer) {
+  async extractImagesFromPdf(buffer, isImageBasedPdf = false) {
     const imageTexts = [];
     
     try {
@@ -225,7 +249,9 @@ class ContentExtractorService {
             const fn = operatorList.fnArray[i];
             // console.log("inside loop fn: ",fn);
             
-            if (fn === 85 || fn === 86) {
+            // 82=paintJpegXObject, 83=paintImageMaskXObject, 84=paintImageMaskXObjectGroup
+            // 85=paintImageXObject, 86=paintInlineImageXObject, 87=paintInlineImageXObjectGroup
+            if (fn >= 82 && fn <= 87) {
               try {
                 const imgData = operatorList.argsArray[i];
                 // console.log("imgData ", imgData);
@@ -258,7 +284,7 @@ class ContentExtractorService {
                       const imageBuffer = await this.convertPdfImageToBuffer(imgObj);
                       // console.log("imageBuffer =====> ", imageBuffer);
                       if (imageBuffer) {
-                        const ocrText = await this.extractFromImage(imageBuffer);
+                        const ocrText = await this.extractFromImage(imageBuffer, isImageBasedPdf);
                         if (ocrText && ocrText.trim().length > 10) {
                           imageTexts.push(ocrText);
                           console.log(`    📄 OCR extracted text from image on page ${pageNum}`);
@@ -435,12 +461,18 @@ async convertPdfImageToBuffer(imageData) {
   }
 
   
-  async extractFromImage(buffer) {
+  async extractFromImage(buffer, useAdvancedPreprocessing = false) {
     try {
+      if (useAdvancedPreprocessing) {
+        // Multi-pass OCR for noisy/fax images
+        return await this.ocrWithBestStrategy(buffer);
+      }
+
       const optimizedBuffer = await this.optimizeImageForOcr(buffer);
-      
       const { data: { text } } = await Tesseract.recognize(optimizedBuffer, 'eng', {
-        logger: () => {}, 
+        logger: () => {},
+        tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+        preserve_interword_spaces: '1',
       });
       
       return text;
@@ -461,6 +493,197 @@ async convertPdfImageToBuffer(imageData) {
     } catch (error) {
       return buffer;
     }
+  }
+
+  /**
+   * Advanced image preprocessing for noisy fax-like documents.
+   * Produces multiple preprocessed variants to maximise OCR accuracy.
+   *
+   *  Pipeline per strategy:
+   *    grayscale → upscale (≥3000 px) → white border padding
+   *    → invert detection → denoise → contrast → sharpen / threshold
+   */
+  async advancedImagePreprocessing(buffer) {
+    try {
+      const metadata = await sharp(buffer).metadata();
+
+      // ── Base: grayscale + upscale + pad ──────────────────────────
+      const minDim = 3000; // Tesseract is most accurate around 300 DPI; 3000 px ≈ 10" @ 300 DPI
+      let baseChain = sharp(buffer).grayscale();
+
+      if (metadata.width < minDim || metadata.height < minDim) {
+        const sf = Math.max(minDim / metadata.width, minDim / metadata.height, 1);
+        baseChain = baseChain.resize(
+          Math.round(metadata.width * sf),
+          Math.round(metadata.height * sf),
+          { kernel: 'lanczos3' }
+        );
+      }
+
+      // Add 50 px white border on every side – Tesseract needs whitespace
+      baseChain = baseChain.extend({
+        top: 50, bottom: 50, left: 50, right: 50,
+        background: { r: 255, g: 255, b: 255 },
+      });
+
+      const baseBuffer = await baseChain.toBuffer();
+
+      // ── Detect inverted image (white text on dark bg) ────────────
+      const stats = await sharp(baseBuffer).stats();
+      const meanBrightness = stats.channels[0].mean;
+      const normalizedBase = meanBrightness < 127
+        ? await sharp(baseBuffer).negate().toBuffer()
+        : baseBuffer;
+
+      // ── Build strategies ─────────────────────────────────────────
+      const strategies = await Promise.all([
+        // S1: Light cleanup (clean scans)
+        sharp(normalizedBase).median(3).normalize().sharpen({ sigma: 1 }).toBuffer(),
+
+        // S2: Heavy denoise + Otsu auto-binarize (heavy fax noise)
+        sharp(normalizedBase).median(5).normalize().sharpen({ sigma: 1.5 }).threshold(0).toBuffer(),
+
+        // S3: Gamma correction – preserves faded / light text & table lines
+        sharp(normalizedBase).median(3).normalize().gamma(1.8).sharpen({ sigma: 2 }).toBuffer(),
+
+        // S4: High threshold – grabs dark text, strips light noise
+        sharp(normalizedBase).median(3).normalize().sharpen({ sigma: 1.5 }).threshold(170).toBuffer(),
+
+        // S5: Low threshold – recovers faint / faded text
+        sharp(normalizedBase).median(3).normalize().sharpen({ sigma: 1.5 }).threshold(80).toBuffer(),
+
+        // S6: Strong unsharp mask – different sharpening for blurry faxes
+        sharp(normalizedBase).median(3).normalize().sharpen({ sigma: 3, m1: 1, m2: 2 }).toBuffer(),
+      ]);
+
+      return strategies;
+    } catch (error) {
+      console.warn('Advanced preprocessing failed, using basic:', error.message);
+      const fallback = await this.optimizeImageForOcr(buffer);
+      return [fallback];
+    }
+  }
+
+  /**
+   * Run OCR across multiple preprocessing strategies × multiple PSM modes.
+   * Uses Tesseract.createWorker for full control over OEM, DPI, etc.
+   * Picks the result with the highest score = confidence × log(textLength).
+   */
+  async ocrWithBestStrategy(buffer) {
+    const strategies = await this.advancedImagePreprocessing(buffer);
+
+    // PSM modes worth trying on fax / scanned documents:
+    //   3 = Fully automatic (default)
+    //   6 = Assume a single uniform block of text (good for tables)
+    //   4 = Assume a single column of text
+    const psmModes = ['3', '6', '4'];
+
+    let bestText = '';
+    let bestScore = 0;
+
+    // Create a reusable Tesseract worker (OEM 1 = LSTM only – best accuracy)
+    const worker = await Tesseract.createWorker('eng', 1, {
+      logger: () => {},
+    });
+
+    try {
+      for (let si = 0; si < strategies.length; si++) {
+        for (const psm of psmModes) {
+          try {
+            await worker.setParameters({
+              tessedit_pageseg_mode: psm,
+              preserve_interword_spaces: '1',
+              user_defined_dpi: '300',
+            });
+
+            const { data } = await worker.recognize(strategies[si]);
+            const text = (data.text || '').trim();
+            const confidence = data.confidence || 0;
+            // Score: prefer high confidence AND long text
+            const score = confidence * Math.log2(text.length + 1);
+
+            if (score > bestScore) {
+              bestScore = score;
+              bestText = data.text; // keep original whitespace
+            }
+
+            // Early exit if confidence is very high
+            if (confidence >= 92) {
+              console.log(`    🎯 High-confidence OCR hit (${confidence}%) on strategy ${si + 1} PSM ${psm}`);
+              return bestText;
+            }
+          } catch (err) {
+            // Silently skip failed combos
+          }
+        }
+      }
+    } finally {
+      await worker.terminate();
+    }
+
+    return bestText;
+  }
+
+  /**
+   * Extract text from fully image-based PDFs (scanned / fax).
+   *
+   * Uses the system pdftocairo (Homebrew poppler) at **600 DPI**
+   * for the highest possible rendering quality, then runs
+   * multi-strategy OCR on each page.
+   */
+  async extractFromImageBasedPdf(buffer) {
+    const pageTexts = [];
+    const tempId = `pdf_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const tempPdfPath = join(tmpdir(), `${tempId}.pdf`);
+    const outputDir = join(tmpdir(), tempId);
+
+    try {
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(tempPdfPath, buffer);
+
+      // Render every page at 600 DPI as PNG using system pdftocairo
+      await new Promise((resolve, reject) => {
+        const args = [
+          '-png',         // output format
+          '-r', '600',    // 600 DPI – maximum useful for OCR
+          '-antialias', 'best',
+          tempPdfPath,
+          join(outputDir, 'page'),
+        ];
+        execFile('pdftocairo', args, { maxBuffer: 100 * 1024 * 1024 }, (err, stdout, stderr) => {
+          if (err) return reject(new Error(`pdftocairo failed: ${err.message}\n${stderr}`));
+          resolve(stdout);
+        });
+      });
+
+      // Collect generated images (sorted by page number)
+      const files = await readdir(outputDir);
+      const imageFiles = files.filter(f => f.endsWith('.png')).sort();
+
+      console.log(`  📄 Processing ${imageFiles.length} page(s) from image-based PDF at 600 DPI...`);
+
+      for (const imageFile of imageFiles) {
+        const imagePath = join(outputDir, imageFile);
+        const imageBuffer = await fsReadFile(imagePath);
+
+        const text = await this.ocrWithBestStrategy(imageBuffer);
+
+        if (text && text.trim().length > 10) {
+          pageTexts.push(text);
+          console.log(`    ✅ Extracted text from ${imageFile} (${text.trim().length} chars)`);
+        }
+
+        await unlink(imagePath).catch(() => {});
+      }
+    } catch (error) {
+      console.error('Image-based PDF extraction error:', error.message);
+      throw error;
+    } finally {
+      await unlink(tempPdfPath).catch(() => {});
+      try { rmSync(outputDir, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    return pageTexts;
   }
 
  

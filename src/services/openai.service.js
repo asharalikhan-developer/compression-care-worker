@@ -429,7 +429,13 @@ class OpenAIService {
 
       if (Array.isArray(partial.patients)) {
         for (const p of partial.patients) {
-          const key = `${(p.patient?.name || "").toLowerCase()}|${p.patient?.date_of_birth || ""}`;
+          const first = (p.patient_first_name || "").toLowerCase();
+          const last = (p.patient_last_name || "").toLowerCase();
+          const dob = p.patient_date_of_birth || "";
+          const key =
+            first || last || dob
+              ? `${first}|${last}|${dob}`
+              : `${(p.source || "").toLowerCase()}|unknown_patient`;
           const idx = patientIndex.get(key);
           if (idx == null) {
             patientIndex.set(key, agg.patients.length);
@@ -438,29 +444,25 @@ class OpenAIService {
             const e = agg.patients[idx];
             agg.patients[idx] = {
               ...e,
-              referrer: { ...(e.referrer || {}), ...(p.referrer || {}) },
-              patient: { ...(e.patient || {}), ...(p.patient || {}) },
-              prescription: {
-                ...(e.prescription || {}),
-                items: [
-                  ...(e.prescription?.items || []),
-                  ...(p.prescription?.items || []),
-                ],
-                diagnosis: [
-                  ...new Set([
-                    ...(e.prescription?.diagnosis || []),
-                    ...(p.prescription?.diagnosis || []),
-                  ]),
-                ],
-                icd_codes: [
-                  ...new Set([
-                    ...(e.prescription?.icd_codes || []),
-                    ...(p.prescription?.icd_codes || []),
-                  ]),
-                ],
+              primary_insurance: {
+                ...(e.primary_insurance || {}),
+                ...(p.primary_insurance || {}),
               },
-              additional_notes:
-                p.additional_notes || e.additional_notes || null,
+              secondary_insurance: {
+                ...(e.secondary_insurance || {}),
+                ...(p.secondary_insurance || {}),
+              },
+              tertiary_insurance: {
+                ...(e.tertiary_insurance || {}),
+                ...(p.tertiary_insurance || {}),
+              },
+              therapist: { ...(e.therapist || {}), ...(p.therapist || {}) },
+              primary_care_physician: {
+                ...(e.primary_care_physician || {}),
+                ...(p.primary_care_physician || {}),
+              },
+              product_ordered:
+                p.product_ordered || e.product_ordered || null,
               document_type: p.document_type || e.document_type || null,
               extraction_warnings: [
                 ...(e.extraction_warnings || []),
@@ -649,7 +651,107 @@ class OpenAIService {
     }
   }
 
-  buildSystemPrompt() {
+//   buildSystemPrompt() {
+//     return `You are a medical and shipping document analyzer specialized in extracting structured information from healthcare documents, referrals, prescriptions, and manufacturer shipping notifications.
+
+// IMPORTANT: First, determine if this email is related to medical/healthcare needs (patient referrals, prescriptions, medical records, compression garments, DME orders, etc.) OR  manufacturer shipping notifications (including template-based shipment
+//      updates).
+
+// If the email is NOT medical-related (e.g., promotional emails, newsletters, personal messages, spam, general business correspondence), return:
+// {
+//   "is_relevant": false,
+//   "reason": "Brief explanation of why this is not a medical document"
+// }
+
+// If the email IS medical-related OR is a manufacturer shipping notification related to a medical referral/order, extract and return a JSON object. Shipping data headers can vary by template (e.g., Customer_Number/Customer, Row_Number, Invoice_Number, txtSalesOrderNo/Order, Customer_PO_Number/PO, Order_Date/Ship Date, POD_Tracking_Number/Tracking, Shipping/Ship Via, Name, Packlist, Ship To). You MUST infer equivalent fields and normalize them into the shipment schema below.
+
+// CRITICAL:
+// - For PATIENT data only: assume a single patient per email. Collect that single patient's details across all sources (email body, attachments, images) and return exactly one patient object when patient data is present.
+// - When body/attachment/image contain partial details for the same person, treat them as ONE patient and merge fields. Do not create duplicate patient entries for split/partial data.
+// - Create multiple patient entries only when there is clear evidence of different people (different full name and/or date of birth).
+// - Shipping emails may include multiple line items, tracking numbers, template-specific fields, and referral-level status updates. Detect the manufacturer template if possible and extract structured shipping information.
+
+// Return structure:
+
+// {
+//   "is_relevant": true,
+//   "total_patients_found": number,
+//   "total_shipments_found": number,
+//   "patients": [
+//     {
+//       "source": "string (e.g., 'email_body', 'attachment: filename.pdf', 'image: image.jpg')",
+//       "patient_first_name": "string or null",
+//       "patient_last_name": "string or null",
+//       "patient_address": "string or null",
+//       "patient_gender": "string or null",
+//       "patient_date_of_birth": "string or null (format: YYYY-MM-DD if possible)",
+//       "patient_email_address": "string or null",
+//       "primary_insurance": {
+//         "id_number": "string or null",
+//         "name": "string or null",
+//         "group_number": "string or null"
+//       },
+//       "secondary_insurance": {
+//         "id_number": "string or null",
+//         "name": "string or null",
+//         "group_number": "string or null"
+//       },
+//       "tertiary_insurance": {
+//         "id_number": "string or null",
+//         "name": "string or null",
+//         "group_number": "string or null"
+//       },
+//       "product_ordered": "string or null",
+//       "therapist": {
+//         "first_name": "string or null",
+//         "last_name": "string or null",
+//         "email_address": "string or null"
+//       },
+//       "primary_care_physician": {
+//         "first_name": "string or null",
+//         "last_name": "string or null"
+//       },
+//       "document_type": "string (e.g., referral, prescription, medical_record, fax)",
+//       "extraction_warnings": ["array of any issues or uncertainties encountered"]
+//     }
+//   ],
+//   "shipments": [
+//     {
+//       "source": "string (e.g., 'email_body', 'attachment: filename.pdf')",
+//       "ship_date": "string or null (YYYY-MM-DD if possible)",
+//       "shipper": "string or null (e.g., UPS, FedEx, USPS)",
+//       "tracking_number": "string or null",
+//       "order_number": "string or null",
+//       "referral_status": "string or null (e.g., 'Shipped', 'Backordered', 'Partial Shipped')",
+//       "line_items": [
+//         {
+//           "sku": "string or null",
+//           "description": "string or null",
+//           "quantity": "number or null",
+//         }
+//       ],
+//       "extraction_warnings": ["array of any issues or uncertainties encountered"]
+//     }
+//   ]
+// }
+
+// Rules:
+// 1. For patient data, return at most ONE patient object per email and merge details from all available sources into that single patient
+// 2. Identify the source of each patient's data (email body, specific attachment filename, or image)
+// 3. If the patient appears in multiple sources, merge the details into one entry and do not duplicate
+// 4. Do not treat a body patient and an attachment patient as separate if identifiers are compatible (same or overlapping name, DOB, address, insurance ID, or therapist/referrer context)
+// 5. Extract ALL shipping information when present, including tracking details and line item statuses
+// 6. Detect manufacturer template when possible; include name and confidence
+// 7. Extract all available information, using null for missing fields
+// 8. Be precise with medical terminology and codes
+// 9. If text is unclear or partially legible, note it in extraction_warnings
+// 10. Normalize phone numbers and dates where possible
+// 11. Secondary and tertiary insurance should mirror primary insurance when separate secondary/tertiary values are not explicitly present
+// 12. Product ordered may appear in email body, attached POC, or referral cover sheet
+// 13. Set line_items to [] when not present (preferred for schema stability)
+// 14. Always return valid JSON`;
+//   }
+buildSystemPrompt() {
     return `You are a medical and shipping document analyzer specialized in extracting structured information from healthcare documents, referrals, prescriptions, and manufacturer shipping notifications.
 
 IMPORTANT: First, determine if this email is related to medical/healthcare needs (patient referrals, prescriptions, medical records, compression garments, DME orders, etc.) OR  manufacturer shipping notifications (including template-based shipment
@@ -663,64 +765,57 @@ If the email is NOT medical-related (e.g., promotional emails, newsletters, pers
 
 If the email IS medical-related OR is a manufacturer shipping notification related to a medical referral/order, extract and return a JSON object. Shipping data headers can vary by template (e.g., Customer_Number/Customer, Row_Number, Invoice_Number, txtSalesOrderNo/Order, Customer_PO_Number/PO, Order_Date/Ship Date, POD_Tracking_Number/Tracking, Shipping/Ship Via, Name, Packlist, Ship To). You MUST infer equivalent fields and normalize them into the shipment schema below.
 
-CRITICAL:
-- An email may contain data for MULTIPLE PATIENTS — for example, one patient's info in the email body, another in a PDF attachment, and another in an image. You MUST extract ALL patients found across ALL sources (email body, attachments, images).
+CRITICAL — PATIENT DATA:
+- Each email contains data for exactly ONE patient. There will never be multiple patients in a single email.
+- Collect that single patient's details across all sources (email body, attachments, images) and return exactly one patient object in the "patients" array.
+- When body, attachment, and/or image contain partial details, they all belong to the SAME patient — merge every field into one patient object. Never create duplicate entries.
+
+CRITICAL — SHIPMENT DATA:
+- A single email may contain MULTIPLE shipments with different tracking numbers, order numbers, ship dates, or line items.
+- Extract ALL shipments found across all sources (email body, attachments, images) as separate objects in the "shipments" array.
 - Shipping emails may include multiple line items, tracking numbers, template-specific fields, and referral-level status updates. Detect the manufacturer template if possible and extract structured shipping information.
 
 Return structure:
 
 {
   "is_relevant": true,
-  "total_patients_found": number,
+  "total_patients_found": 0 or 1,
   "total_shipments_found": number,
   "patients": [
     {
-      "source": "string (e.g., 'email_body', 'attachment: filename.pdf', 'image: image.jpg')",
-      "referrer": {
+      "source": "string (e.g., 'email_body', 'attachment: filename.pdf', 'image: image.jpg', or comma-separated if merged from multiple sources)",
+      "patient_first_name": "string or null",
+      "patient_last_name": "string or null",
+      "patient_address": "string or null",
+      "patient_gender": "string or null",
+      "patient_date_of_birth": "string or null (format: YYYY-MM-DD if possible)",
+      "patient_email_address": "string or null",
+      "primary_insurance": {
+        "id_number": "string or null",
         "name": "string or null",
-        "title": "string or null (e.g., Dr., MD, NP)",
-        "specialty": "string or null",
-        "organization": "string or null",
-        "address": "string or null",
-        "phone": "string or null",
-        "fax": "string or null",
-        "email": "string or null",
-        "npi": "string or null (National Provider Identifier)",
-        "license_number": "string or null"
+        "group_number": "string or null"
       },
-      "patient": {
+      "secondary_insurance": {
+        "id_number": "string or null",
         "name": "string or null",
-        "date_of_birth": "string or null (format: YYYY-MM-DD if possible)",
-        "age": "number or null",
-        "gender": "string or null",
-        "address": "string or null",
-        "phone": "string or null",
-        "email": "string or null",
-        "insurance_provider": "string or null",
-        "insurance_id": "string or null",
-        "medical_record_number": "string or null"
+        "group_number": "string or null"
       },
-      "prescription": {
-        "diagnosis": ["array of diagnosis strings"],
-        "icd_codes": ["array of ICD codes if present"],
-        "items": [
-          {
-            "name": "string",
-            "type": "string (e.g., medication, compression garment, DME)",
-            "specifications": "string or null (size, strength, details)",
-            "quantity": "string or null",
-            "frequency": "string or null",
-            "duration": "string or null",
-            "instructions": "string or null"
-          }
-        ],
-        "medical_necessity": "string or null",
-        "date_prescribed": "string or null",
-        "valid_until": "string or null"
+      "tertiary_insurance": {
+        "id_number": "string or null",
+        "name": "string or null",
+        "group_number": "string or null"
       },
-      "additional_notes": "string or null",
+      "product_ordered": "string or null",
+      "therapist": {
+        "first_name": "string or null",
+        "last_name": "string or null",
+        "email_address": "string or null"
+      },
+      "primary_care_physician": {
+        "first_name": "string or null",
+        "last_name": "string or null"
+      },
       "document_type": "string (e.g., referral, prescription, medical_record, fax)",
-      "confidence_score": "number between 0 and 1 indicating extraction confidence",
       "extraction_warnings": ["array of any issues or uncertainties encountered"]
     }
   ],
@@ -736,7 +831,7 @@ Return structure:
         {
           "sku": "string or null",
           "description": "string or null",
-          "quantity": "number or null",
+          "quantity": "number or null"
         }
       ],
       "extraction_warnings": ["array of any issues or uncertainties encountered"]
@@ -745,20 +840,22 @@ Return structure:
 }
 
 Rules:
-1. Extract ALL patients found — each patient should be a separate object in the "patients" array
-2. Identify the source of each patient's data (email body, specific attachment filename, or image)
-3. If the same patient appears in multiple sources, merge their data into one entry
-4. Extract ALL shipping information when present, including tracking details and line item statuses
-5. Detect manufacturer template when possible; include name and confidence
-6. Extract all available information, using null for missing fields
-7. Be precise with medical terminology and codes
-8. If text is unclear or partially legible, note it in extraction_warnings
-9. Normalize phone numbers and dates where possible
-10. If multiple prescriptions/items exist for a patient, include all in their items array
-11. Set line_items to [] when not present (preferred for schema stability),
-12. Always return valid JSON`;
+1. The "patients" array MUST contain at most ONE object — never more than one patient per email
+2. Merge all patient-related details from every source (body, attachments, images) into that single patient object
+3. If patient data is found in multiple sources, list all sources comma-separated in the "source" field (e.g., "email_body, attachment: referral.pdf")
+4. The "shipments" array may contain MULTIPLE objects — one per distinct shipment/tracking number found
+5. Extract ALL shipping information when present, including tracking details and line item statuses
+6. Detect manufacturer template when possible
+7. Extract all available information, using null for missing fields
+8. Be precise with medical terminology and codes
+9. If text is unclear or partially legible, note it in extraction_warnings
+10. Normalize phone numbers and dates where possible
+11. Secondary and tertiary insurance should mirror primary insurance when separate secondary/tertiary values are not explicitly present
+12. Product ordered may appear in email body, attached POC, or referral cover sheet
+13. Set line_items to [] when not present (preferred for schema stability)
+14. Always return valid JSON`;
   }
-
+  
   buildUserPrompt(extractedContent) {
     let prompt =
       "Please analyze the following content and extract medical and shipping details as per the system instructions:\n\n";
@@ -800,12 +897,14 @@ Rules:
       prompt += `Please examine the images carefully for any medical information, prescriptions, referral details, or shipping labels/tracking info.\n\n`;
     }
 
-    prompt += `INSTRUCTIONS: 
+prompt += `INSTRUCTIONS: 
 1. Check ALL sources (email body, each attachment, each image) for patient and shipping information
-2. An email may contain MULTIPLE PATIENTS — extract ALL of them
-3. An email may contain shipping details — extract ALL tracking, line items, and statuses
-4. Indicate the source where each patient's or shipment's data was found
-5. Return valid JSON including both patients and shipments arrays as applicable.`;
+2. For PATIENT data, assume only a SINGLE patient per email and return only one patient object
+3. If the same patient has details split between body and attachments, merge those details into that one patient record
+4. Create another patient object only if identifiers clearly point to a different person
+5. An email may contain shipping details — extract ALL tracking, line items, and statuses
+6. Indicate the source where each patient's or shipment's data was found
+7. Return valid JSON including both patients and shipments arrays as applicable.`;
 
     return prompt;
   }
@@ -856,7 +955,21 @@ Rules:
       };
     }
 
-    const requiredPatientFields = ["patient", "prescription", "document_type"];
+    const requiredPatientFields = [
+      "patient_first_name",
+      "patient_last_name",
+      "patient_address",
+      "patient_gender",
+      "patient_date_of_birth",
+      "patient_email_address",
+      "primary_insurance",
+      "secondary_insurance",
+      "tertiary_insurance",
+      "product_ordered",
+      "therapist",
+      "primary_care_physician",
+      "document_type",
+    ];
     const validationResults = [];
 
     if (hasPatientsArray) {
@@ -874,7 +987,9 @@ Rules:
 
         validationResults.push({
           patientIndex: i,
-          patientName: patient.patient?.name || "Unknown",
+          patientName:
+            `${patient.patient_first_name || ""} ${patient.patient_last_name || ""}`.trim() ||
+            "Unknown",
           source: patient.source || "Unknown",
           isValid: missingFields.length === 0,
           missingFields,
