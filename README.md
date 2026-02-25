@@ -10,6 +10,7 @@ A Node.js service that reads emails from Gmail, extracts content from various fo
   - DOCX/Word documents
   - Images (via OCR and Vision API)
   - Plain text emails
+  - Spreadsheets (`.xls`, `.xlsx`, `.csv`) — extracts textual cells
 - 🤖 **AI-Powered Extraction**: Uses OpenAI GPT-4.5 to extract:
   - Referrer details (name, organization, contact info, NPI)
   - Patient information (name, DOB, insurance, contact)
