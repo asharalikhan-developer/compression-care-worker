@@ -11,7 +11,8 @@ const ROOT_DIR = path.resolve(__dirname, '../..');
 export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
-    model: 'gpt-4.1',
+    model: 'gpt-4.1-mini',
+    gpt5model: 'gpt-5',
     // model: 'gpt-4o-mini',
     temperature: 0.2,
   },
@@ -21,11 +22,16 @@ export const config = {
     scopes: ['https://www.googleapis.com/auth/gmail.modify'],
     pubsubTopic: process.env.GMAIL_PUBSUB_TOPIC,
   },
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    apiSecret: process.env.CLOUDINARY_API_SECRET,
+  },
   redis: {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT) || 6379,
-    password: process.env.REDIS_PASSWORD || undefined,
-    queueName: process.env.REDIS_QUEUE_NAME || 'gmail-message-queue',
+    password: process.env.REDIS_PASS || undefined,
+    queueName: process.env.REDIS_QUEUE_NAME,
   },
   processing: {
     checkIntervalMs: parseInt(process.env.CHECK_INTERVAL_MS) || 60000,

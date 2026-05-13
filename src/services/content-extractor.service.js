@@ -5,6 +5,9 @@ import Tesseract from 'tesseract.js';
 import sharp from 'sharp';
 import XLSX from "xlsx";
 
+import cloudinaryService from './cloudinary.service.js';
+import fixPdfOrientationBuffer from '../scripts/fixPdfOrientationBuffer.js';
+
 
 class ContentExtractorService {
   constructor() {
@@ -45,6 +48,7 @@ class ContentExtractorService {
       textContent: null,
       attachmentContents: [],
       images: [],
+      faxattachments: []
     };
 
     const bodyParts = [];
@@ -89,6 +93,13 @@ class ContentExtractorService {
               filename: attachment.filename,
               base64: content.data,
               mimeType: attachment.mimeType,
+              fax: content.fax || false
+            });
+          }else if(content.type === 'fax') {
+            extractedContent.faxattachments.push({
+              filename: attachment.filename,
+              url: content.data,
+              mimeType: attachment.mimeType,
             });
           }
         }
@@ -107,18 +118,25 @@ class ContentExtractorService {
     if (this.supportedDocTypes.pdf.includes(mimeType) || filename?.toLowerCase().endsWith('.pdf')) {
       console.log(`  📄 Processing PDF: ${filename}`);
       const text = await this.extractFromPdf(data);
-      
-      // if (!text || text.trim().length === 0) {
-      //   console.log('  📸 PDF appears to be fully scanned/image-based, sending to Vision API');
-      //   const base64 = data.toString('base64');
-      //   return { 
-      //     type: 'image', 
-      //     data: base64,
-      //     mimeType: 'application/pdf',
-      //     note: 'Scanned PDF - sent as image for Vision analysis'
-      //   };
-      // }
-      
+
+      if (!text || text.trim().length === 0) {
+        console.log('  📸 PDF appears to be fully scanned/image-based, fixing orientation and uploading to Cloudinary');
+        // Fix orientation before upload
+        let fixedBuffer;
+        try {
+          fixedBuffer = await fixPdfOrientationBuffer(data, filename);
+        } catch (err) {
+          console.error('  ⚠️ Error fixing PDF orientation, uploading original:', err.message);
+          fixedBuffer = data;
+        }
+        const pdfUrl = await cloudinaryService.uploadPdf(fixedBuffer, filename);
+        return {
+          type: 'fax',
+          data: pdfUrl,
+          mimeType: 'application/pdf',
+        };
+      }
+
       console.log(`  ✅ Extracted ${text.length} characters from PDF (including any embedded images)`);
       return { type: 'text', data: text };
     }
@@ -143,8 +161,7 @@ class ContentExtractorService {
       const optimizedImage = await this.optimizeImageForApi(data);
       const base64 = optimizedImage.toString('base64');
       
-      return { 
-        type: 'image', 
+      return {  
         data: base64,
         ocrText: ocrText,
         mimeType: mimeType || 'image/jpeg',
@@ -162,7 +179,6 @@ class ContentExtractorService {
  
   async extractFromPdf(buffer) {
     let textContent = '';
-    let imageTexts = [];
 
     try {
       const data = await pdf(buffer);
@@ -181,184 +197,17 @@ class ContentExtractorService {
       }
     }
 
-    try {
-      console.log('  🔍 Scanning PDF for embedded images...');
-      imageTexts = await this.extractImagesFromPdf(buffer);
-      if (imageTexts.length > 0) {
-        console.log(`  📸 Found and processed ${imageTexts.length} embedded image(s) in PDF`);
-      }
-    } catch (error) {
-      console.warn('PDF image extraction failed:', error.message);
-    }
+   
 
-    const allContent = [textContent, ...imageTexts].filter(t => t && t.trim().length > 0);
+    const allContent = [textContent].filter(t => t && t.trim().length > 0);
     
     if (allContent.length === 0) {
       console.warn('Could not extract any content from PDF');
       return '';
     }
-
-    return allContent.join('\n\n--- [Image Content] ---\n\n');
+    return allContent.join('\n');
   }
 
-  async extractImagesFromPdf(buffer) {
-    const imageTexts = [];
-    
-    try {
-      const uint8Array = new Uint8Array(buffer);
-      const loadingTask = pdfjsLib.getDocument({
-        data: uint8Array,
-        useSystemFonts: true,
-      });
-      
-      const pdfDocument = await loadingTask.promise;
-// console.log("pdf Document pages",pdfDocument.numPages);
-      for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
-        try {
-          const page = await pdfDocument.getPage(pageNum);
-          // console.log("before operator",page);
-          
-          const operatorList = await page.getOperatorList();
-          // console.log("after operator",operatorList);
-          
-          for (let i = 0; i < operatorList.fnArray.length; i++) {
-            const fn = operatorList.fnArray[i];
-            // console.log("inside loop fn: ",fn);
-            
-            if (fn === 85 || fn === 86) {
-              try {
-                const imgData = operatorList.argsArray[i];
-                // console.log("imgData ", imgData);
-                
-                if (imgData && imgData[0]) {
-                  const imgName = imgData[0];
-                  // const objs = page.objs;
-                  // console.log("objs =====> ", objs);
-                  
-                  const imgObj = await new Promise((resolve) => {
-              // Try page-specific objects first
-              page.objs.get(imgName, (obj) => {
-                if (obj) return resolve(obj);
-                
-                // If not in page.objs, check commonObjs
-                page.commonObjs.get(imgName, (commonObj) => {
-                  resolve(commonObj);
-                });
-              });
-            });
-
-
-                  
-                  // if (objs._objs && objs._objs[imgName]) {
-                  //   console.log("objs._objs =====> ",objs._objs);
-                    
-                  //   const imgObj = objs._objs[imgName];
-                    // console.log("imgObj =====> ", imgObj);
-                    if (imgObj.data) {
-                      const imageBuffer = await this.convertPdfImageToBuffer(imgObj);
-                      // console.log("imageBuffer =====> ", imageBuffer);
-                      if (imageBuffer) {
-                        const ocrText = await this.extractFromImage(imageBuffer);
-                        if (ocrText && ocrText.trim().length > 10) {
-                          imageTexts.push(ocrText);
-                          console.log(`    📄 OCR extracted text from image on page ${pageNum}`);
-                        }
-                      }
-                    }
-                  }
-                // }
-              } catch (imgError) {
-                console.warn(`    Error processing image on page ${pageNum}:`, imgError.message);
-              }
-            }
-          }
-        } catch (pageError) {
-          console.warn(`Error processing page ${pageNum}:`, pageError.message);
-        }
-      }
-    } catch (error) {
-      console.warn('PDF image extraction error:', error.message);
-    }
-
-    return imageTexts;
-  }
-
-  // async convertPdfImageToBuffer(imageData) {
-  //   try {
-  //     const { width, height, data } = imageData;
-      
-  //     if (!width || !height || !data) {
-  //       return null;
-  //     }
-
-  //     const channels = data.length / (width * height);
-      
-  //     if (channels === 4) {
-  //       return await sharp(Buffer.from(data), {
-  //         raw: { width, height, channels: 4 }
-  //       }).png().toBuffer();
-  //     } else if (channels === 3) {
-  //       return await sharp(Buffer.from(data), {
-  //         raw: { width, height, channels: 3 }
-  //       }).png().toBuffer();
-  //     } else if (channels === 1) {
-  //       return await sharp(Buffer.from(data), {
-  //         raw: { width, height, channels: 1 }
-  //       }).png().toBuffer();
-  //     }
-
-  //     return null;
-  //   } catch (error) {
-  //     return null;
-  //   }
-  // }
-
-async convertPdfImageToBuffer(imageData) {
-  try {
-    const { width, height, data, kind } = imageData;
-
-    if (!width || !height || !data) return null;
-
-    let processedData = data;
-    let channels = 1;
-
-    // Handle Kind 1: 1-bit per pixel (Black and White)
-    if (kind === 1) {
-      // We need to expand 1 bit into 1 byte (8 bits)
-      const unpackedData = new Uint8Array(width * height);
-      for (let i = 0, n = data.length; i < n; i++) {
-        const byte = data[i];
-        for (let bit = 7; bit >= 0; bit--) {
-          const pixelIndex = i * 8 + (7 - bit);
-          if (pixelIndex < unpackedData.length) {
-            // If bit is 1, set pixel to 255 (white), else 0 (black)
-            unpackedData[pixelIndex] = (byte & (1 << bit)) ? 255 : 0;
-          }
-        }
-      }
-      processedData = unpackedData;
-      channels = 1;
-    } else {
-      // For Kind 2 (RGB) or 3 (RGBA), calculate channels normally
-      channels = data.length / (width * height);
-    }
-
-    // Now use sharp with the processed data
-    return await sharp(Buffer.from(processedData), {
-      raw: {
-        width: width,
-        height: height,
-        channels: channels
-      }
-    })
-    .png()
-    .toBuffer();
-
-  } catch (error) {
-    console.error("Error converting image buffer:", error);
-    return null;
-  }
-}
   
   async extractFromPdfWithPdfjs(buffer) {
     try {

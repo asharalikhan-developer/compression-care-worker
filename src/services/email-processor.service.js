@@ -1,9 +1,13 @@
 import { Worker } from 'bullmq';
+import Redis from 'ioredis';
 import gmailService from './gmail.service.js';
 import contentExtractorService from './content-extractor.service.js';
 import openaiService from './openai.service.js';
 import config from '../config/index.js';
 import mongoose from 'mongoose';
+import cloudinaryService from './cloudinary.service.js';
+
+const PROCESSED_EMAILS_KEY = 'processed-email-ids';
 
 
 class EmailProcessorService {
@@ -13,7 +17,7 @@ class EmailProcessorService {
     this.mongooseConnected = false;
     this.ProcessedResult = null;
     this.worker = null;
-    this.redisConnection = null;
+    this.redis = null;
   }
 
 
@@ -22,6 +26,8 @@ class EmailProcessorService {
     
     await gmailService.initialize();
     openaiService.initialize();
+    cloudinaryService.initialize(); // <-- add this
+
     
     const mongoUri = process.env.MONGODB_URI;
     const mongoDbName = process.env.MONGODB_DB || 'compressioncare';
@@ -43,12 +49,13 @@ class EmailProcessorService {
       console.log('ℹ️  MONGODB_URI not configured — skipping MongoDB persistence.');
     }
 
-    // Setup Redis connection for BullMQ
-    this.redisConnection = {
+    // Single ioredis client shared by BullMQ worker and ZSET operations
+    this.redis = new Redis({
       host: config.redis.host,
       port: config.redis.port,
       password: config.redis.password,
-    };
+      maxRetriesPerRequest: null,
+    });
 
     console.log(`\n✅ Redis config loaded: ${config.redis.host}:${config.redis.port}`);
     console.log('\n✅ All services initialized successfully!\n');
@@ -58,9 +65,9 @@ class EmailProcessorService {
    async saveResult(result) {
     if (!this.mongooseConnected || !this.ProcessedResult) return null;
     try {
-      const doc = await this.ProcessedResult.insertMany(result);
-      console.log(`  💾 Saved result to MongoDB with _id=${doc.length}`);
-      return doc._id;
+      const docs = await this.ProcessedResult.insertMany(result);
+      console.log(`  💾 Saved ${docs.length} result(s) to MongoDB`);
+      return docs[0]?._id || null;
     } catch (err) {
       console.error('  ❌ Failed to save result to MongoDB (mongoose):', err.message);
       return null;
@@ -72,11 +79,12 @@ class EmailProcessorService {
     
     try {
       console.log('  📄 Extracting content...');
+      console.time('⏱️ Content Extraction');
       const extractedContent = await contentExtractorService.extractContent(email);
-      
+     
       console.log('  🤖 Analyzing with OpenAI...');
       const medicalDetails = await openaiService.extractMedicalDetails(extractedContent);
-      
+      console.timeEnd('⏱️ Content Extraction');
       if (medicalDetails.is_relevant === false) {
         console.log(`  ⏭️  Skipping non-medical email: ${medicalDetails.reason || 'Not relevant'}`);
         return {
@@ -91,30 +99,18 @@ class EmailProcessorService {
         };
       }
       
-      const validation = openaiService.validateExtraction(medicalDetails);
       
-      const patientCount = medicalDetails.total_patients_found || medicalDetails.patients?.length || 0;
+      const patientCount = medicalDetails.patient ? 1 : 0;
       const shipmentCount = medicalDetails.total_shipments_found || medicalDetails.shipments?.length || 0;
       console.log(`  👥 Found ${patientCount} patient(s)`);
       console.log(`  📦 Found ${shipmentCount} shipment(s)`);
       
-      if (medicalDetails.patients) {
-        medicalDetails.patients.forEach((p, i) => {
-          const name = p.patient?.name || 'Unknown';
-          const source = p.source || 'Unknown source';
-          console.log(`     ${i + 1}. ${name} (from: ${source})`);
-        });
-      }
-      if (medicalDetails.shipments) {
-        medicalDetails.shipments.forEach((s, i) => {
-          const shipper = s.shipper || 'Unknown Shipper';
-          const tracking = s.tracking_number || 'No Tracking';
-          const shipDate = s.ship_date || 'Unknown Date';
-          console.log(`     ${i + 1}. Shipment via ${shipper} on ${shipDate} (Tracking: ${tracking})`);
-        });
-      }
-      
-      const result = {
+      if (medicalDetails.patient) {
+       
+          const name = medicalDetails.patient?.patient_first_name || 'Unknown';
+          const source = medicalDetails.patient?.source || 'Unknown source';
+          console.log(`     1. ${name} (from: ${source})`);
+        const result = {
         success: true,
         isRelevant: true,
         emailId: email.id,
@@ -123,19 +119,39 @@ class EmailProcessorService {
         emailDate: email.date,
         processedAt: new Date().toISOString(),
         totalPatientsFound: patientCount,
-        totalShipmentsFound: shipmentCount,
         extractedData: medicalDetails,
-        validation: {
-          isValid: validation.isValid,
-          totalPatients: validation.totalPatients,
-          totalShipments: validation.totalShipments,
-          validationResults: validation.validationResults,
-        },
       };
 
       console.log('  ✅ Email processed successfully!');
       
       return result;
+      }
+      if (medicalDetails.shipments) {
+        medicalDetails.shipments.forEach((s, i) => {
+          const shipper = s.shipper || 'Unknown Shipper';
+          const tracking = s.tracking_number || 'No Tracking';
+          const shipDate = s.ship_date || 'Unknown Date';
+          console.log(`     ${i + 1}. Shipment via ${shipper} on ${shipDate} (Tracking: ${tracking})`);
+        });
+
+         const result = {
+        success: true,
+        isRelevant: true,
+        emailId: email.id,
+        emailSubject: email.subject,
+        emailFrom: email.from,
+        emailDate: email.date,
+        processedAt: new Date().toISOString(),
+        totalShipmentsFound: shipmentCount,
+        extractedData: medicalDetails,
+      };
+
+      console.log('  ✅ Email processed successfully!');
+      
+      return result;
+      }
+      
+     
     } catch (error) {
       console.error(`  ❌ Error processing email: ${error.message}`);
       
@@ -223,18 +239,44 @@ class EmailProcessorService {
         }
       },
       {
-        connection: this.redisConnection,
+        connection: this.redis,
         concurrency: concurrency,
       }
     );
 
     // Worker event listeners
-    this.worker.on('completed', (job, result) => {
+    this.worker.on('completed', async (job, result) => {
       console.log(`✅ Job ${job.id} completed successfully`);
+      try {
+        const messageId = job.data?.messageId;
+        // Remove messageId from the processed-email-ids ZSET so the producer
+        // won't skip it with "already queued" if the same email appears again.
+        if (messageId) {
+          await this.redis.zrem(PROCESSED_EMAILS_KEY, messageId);
+          console.log(`🗑️  Removed messageId ${messageId} from ${PROCESSED_EMAILS_KEY} ZSET`);
+        }
+        // Remove the BullMQ job itself from Redis
+        await job.remove();
+        console.log(`🗑️  Removed Job ${job.id} from Redis`);
+      } catch (err) {
+        console.warn(`⚠️ Cleanup error for Job ${job.id}:`, err?.message || err);
+      }
     });
 
-    this.worker.on('failed', (job, error) => {
+    this.worker.on('failed', async (job, error) => {
       console.error(`❌ Job ${job?.id} failed:`, error.message);
+      try {
+        const messageId = job?.data?.messageId;
+        // Remove messageId from ZSET so the producer can re-enqueue it
+        if (messageId) {
+          await this.redis.zrem(PROCESSED_EMAILS_KEY, messageId);
+          console.log(`🗑️  Removed failed messageId ${messageId} from ${PROCESSED_EMAILS_KEY} ZSET`);
+        }
+        await job?.remove();
+        console.log(`🗑️  Removed failed Job ${job?.id} from Redis`);
+      } catch (err) {
+        console.warn(`⚠️ Cleanup error for failed Job ${job?.id}:`, err?.message || err);
+      }
     });
 
     this.worker.on('error', (error) => {
@@ -267,6 +309,11 @@ class EmailProcessorService {
     console.log('\n🛑 Shutting down Email Processor Service...');
     
     await this.stopWorker();
+
+    if (this.redis) {
+      await this.redis.quit();
+      console.log('✅ Redis disconnected');
+    }
     
     if (this.mongooseConnected) {
       await mongoose.disconnect();

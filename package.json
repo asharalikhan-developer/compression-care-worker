@@ -23,6 +23,8 @@
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",
     "bullmq": "^5.67.2",
+    "canvas": "^3.2.1",
+    "cloudinary": "^2.9.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^5.2.1",
@@ -31,10 +33,12 @@
     "mammoth": "^1.6.0",
     "mongoose": "^9.1.5",
     "openai": "^4.20.1",
+    "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
-    "pdfjs-dist": "^4.0.379",
-    "sharp": "^0.33.1",
-    "tesseract.js": "^5.0.4",
+    "pdf-to-img": "^5.0.0",
+    "pdfjs-dist": "^5.4.624",
+    "sharp": "^0.34.5",
+    "tesseract.js": "^7.0.0",
     "xlsx": "^0.18.5"
   },
   "engines": {
