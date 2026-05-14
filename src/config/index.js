@@ -12,7 +12,7 @@ export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
     model: 'gpt-4.1-mini',
-    gpt5model: 'gpt-5',
+    gpt5model: 'gpt-5.5',
     // model: 'gpt-4o-mini',
     temperature: 0.2,
   },

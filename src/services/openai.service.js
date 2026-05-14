@@ -403,19 +403,19 @@ Return:
     "patient_date_of_birth": "string or null (format: YYYY-MM-DD if possible)",
     "patient_email_address": "string or null",
     "primary_insurance": {
-      "id_number": "string or null",
+      "id_number": "string or null (also: Member ID, Member #, Subscriber ID)",
       "name": "string or null",
-      "group_number": "string or null"
+      "group_number": "string or null (also: Group, Group #, Grp #, Plan ID)"
     },
     "secondary_insurance": {
-      "id_number": "string or null",
+      "id_number": "string or null (also: Member ID, Member #, Subscriber ID)",
       "name": "string or null",
-      "group_number": "string or null"
+      "group_number": "string or null (also: Group, Group #, Grp #, Plan ID)"
     },
     "tertiary_insurance": {
-      "id_number": "string or null",
+      "id_number": "string or null (also: Member ID, Member #, Subscriber ID)",
       "name": "string or null",
-      "group_number": "string or null"
+      "group_number": "string or null (also: Group, Group #, Grp #, Plan ID)"
     },
     "product_ordered": "string or null",
     "therapist": {

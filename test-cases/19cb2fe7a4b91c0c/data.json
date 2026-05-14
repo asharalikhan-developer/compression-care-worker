@@ -1,0 +1,255 @@
+{
+  "documentId": "19cb2fe7a4b91c0c",
+  "createdAt": "2026-05-14T10:30:38.574Z",
+  "groundTruth": {
+    "is_relevant": true,
+    "type": "patient",
+    "patient": {
+      "source": "attachment: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF",
+      "patient_first_name": "Kristi Renee",
+      "patient_last_name": "Morgan",
+      "patient_address": "1040 Beaverdale Rd NE, Dalton, GA 30721-2410",
+      "patient_gender": "Female",
+      "patient_date_of_birth": "1969-06-05",
+      "patient_email_address": "krismorg14@gmail.com",
+      "primary_insurance": {
+        "id_number": "SJNA158W2216",
+        "name": "Anthem BCBS / SHBP HRA Plan / Anthem Silver Plan",
+        "group_number": "GA80392NAS"
+      },
+      "secondary_insurance": {
+        "id_number": null,
+        "name": null,
+        "group_number": null
+      },
+      "tertiary_insurance": {
+        "id_number": null,
+        "name": null,
+        "group_number": null
+      },
+      "product_ordered": "Compression garments: day use 3 sets of custom flat or circular knit knee-high or thigh-high compression garments, compression panty-style garment, or compression capri; night use one knee-high Tribute Wrap Size Large Regular for left and right legs; donning aids. Diagnosis I89.0 Other lymphedema. Extremity: bilateral lower.",
+      "therapist": {
+        "first_name": "David",
+        "last_name": "Barron",
+        "email_address": "Dbarron@hhcs.org"
+      },
+      "primary_care_physician": {
+        "first_name": "Zorana",
+        "last_name": "Mrsic"
+      },
+      "extraction_warnings": [
+        "Fax was scanned with low resolution and some fields were partially legible.",
+        "Primary insurance member ID appears to be SJNA156W2216, but one character may be uncertain due to scan quality.",
+        "PCP listed in demographics as Ashley Goniea, NP; referring/ordering physician and signed physician authorization are Zorana Mrsic, MD. Per instructions, referring physician was mapped to primary_care_physician.",
+        "No secondary or tertiary insurance was explicitly present."
+      ]
+    }
+  },
+  "runs": [
+    {
+      "runNumber": 1,
+      "timestamp": "2026-05-14T10:30:38.574Z",
+      "result": {
+        "is_relevant": true,
+        "type": "patient",
+        "patient": {
+          "source": "attachment: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF",
+          "patient_first_name": "Kristi Renee",
+          "patient_last_name": "Morgan",
+          "patient_address": "1040 Beaverdale Rd NE, Dalton, GA 30721-2410",
+          "patient_gender": "Female",
+          "patient_date_of_birth": "1969-06-05",
+          "patient_email_address": "krismorg14@gmail.com",
+          "primary_insurance": {
+            "id_number": "SJNA158W2216",
+            "name": "Anthem BCBS / SHBP HRA Plan / Anthem Silver Plan",
+            "group_number": "GA80392NAS"
+          },
+          "secondary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "tertiary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "product_ordered": "Compression garments: day use 3 sets of custom flat or circular knit knee-high or thigh-high compression garments, compression panty-style garment, or compression capri; night use one knee-high Tribute Wrap Size Large Regular for left and right legs; donning aids. Diagnosis I89.0 Other lymphedema. Extremity: bilateral lower.",
+          "therapist": {
+            "first_name": "David",
+            "last_name": "Barron",
+            "email_address": "Dbarron@hhcs.org"
+          },
+          "primary_care_physician": {
+            "first_name": "Zorana",
+            "last_name": "Mrsic"
+          },
+          "extraction_warnings": [
+            "Fax was scanned with low resolution and some fields were partially legible.",
+            "Primary insurance member ID appears to be SJNA156W2216, but one character may be uncertain due to scan quality.",
+            "PCP listed in demographics as Ashley Goniea, NP; referring/ordering physician and signed physician authorization are Zorana Mrsic, MD. Per instructions, referring physician was mapped to primary_care_physician.",
+            "No secondary or tertiary insurance was explicitly present."
+          ]
+        }
+      },
+      "comparison": {
+        "confidenceScore": 1,
+        "label": "Very Stable",
+        "type": "patient",
+        "breakdown": {
+          "patient_first_name": 1,
+          "patient_last_name": 1,
+          "patient_date_of_birth": 1,
+          "patient_address": 1,
+          "patient_gender": 1,
+          "patient_email_address": 1,
+          "product_ordered": 1,
+          "source": 1,
+          "primary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "secondary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "tertiary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "therapist": {
+            "score": 1,
+            "fieldScores": {
+              "first_name": 1,
+              "last_name": 1,
+              "email_address": 1
+            }
+          },
+          "primary_care_physician": {
+            "score": 1,
+            "fieldScores": {
+              "first_name": 1,
+              "last_name": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "runNumber": 2,
+      "timestamp": "2026-05-14T11:45:08.935Z",
+      "result": {
+        "is_relevant": true,
+        "type": "patient",
+        "patient": {
+          "source": "attachment: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF",
+          "patient_first_name": "Kristi Renee",
+          "patient_last_name": "Morgan",
+          "patient_address": "1040 Beaverdale Rd NE, Dalton, GA 30721-2410",
+          "patient_gender": "female",
+          "patient_date_of_birth": "1969-06-05",
+          "patient_email_address": "krismorg14@gmail.com",
+          "primary_insurance": {
+            "id_number": "SJNA159W2216",
+            "name": "Anthem BCBS / Anthem Silver Plan",
+            "group_number": "GA00329NAS"
+          },
+          "secondary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "tertiary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "product_ordered": "Compression garments; initial garment order: Tribute Wraps Large Regular knee-high for left and right legs. Prescription also mentions day-use custom flat or circular knit knee-high/thigh-high compression garments or compression panty/capri, night-use knee-high Tribute Wrap Size Large Regular for left and right legs, and donning aids.",
+          "therapist": {
+            "first_name": "David",
+            "last_name": "Barron",
+            "email_address": "DBarron@hhcs.org"
+          },
+          "primary_care_physician": {
+            "first_name": "Ashley",
+            "last_name": "Gonicea"
+          },
+          "extraction_warnings": [
+            "Fax attachment was scanned with visual noise and low resolution; some fields may be partially unclear.",
+            "Patient email address appears to be krismorg14@gmail.com, but the fax quality makes the exact characters somewhat uncertain.",
+            "Insurance group number appears as GA00329NAS; fax/card image quality makes final characters slightly uncertain.",
+            "Documents list PCP as Ashley Gonicea, NP and referring/ordering physician as Zorana Mrsic, MD. The primary_care_physician field was populated with the explicitly labeled PCP."
+          ]
+        }
+      },
+      "comparison": {
+        "confidenceScore": 0.9338,
+        "label": "Minor Differences",
+        "type": "patient",
+        "breakdown": {
+          "patient_first_name": 1,
+          "patient_last_name": 1,
+          "patient_date_of_birth": 1,
+          "patient_address": 1,
+          "patient_gender": 1,
+          "patient_email_address": 1,
+          "product_ordered": 0.8797780665446036,
+          "source": 1,
+          "primary_insurance": {
+            "score": 0.9286772486772487,
+            "fieldScores": {
+              "id_number": 0.9666666666666666,
+              "name": 0.8833333333333333,
+              "group_number": 0.9170370370370371
+            }
+          },
+          "secondary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "tertiary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "therapist": {
+            "score": 1,
+            "fieldScores": {
+              "first_name": 1,
+              "last_name": 1,
+              "email_address": 1
+            }
+          },
+          "primary_care_physician": {
+            "score": 0.28095238095238095,
+            "fieldScores": {
+              "first_name": 0,
+              "last_name": 0.5619047619047619
+            }
+          }
+        }
+      }
+    }
+  ],
+  "groundTruthSetAt": "2026-05-14T11:40:27.043Z"
+}

@@ -179,6 +179,67 @@ src/
 
 ---
 
+## Evaluation Techniques (Confidence Scoring)
+
+Used in `src/utils/confidence-scorer.js` to measure how consistently the AI extracts data from the same document across multiple runs.
+
+### 1. Ground Truth Comparison (Reference-Based Evaluation)
+
+A human-verified correct parse result is stored as `groundTruth` in `test-cases/{documentId}/data.json`. Every AI parse run is scored against this reference. This is the standard evaluation pattern used in NLP/ML pipelines — the model output is only meaningful when compared to a known-correct answer.
+
+### 2. Jaro-Winkler String Similarity
+
+Used to compare two string field values. Unlike exact match (which returns 0 or 1), Jaro-Winkler returns a continuous score between 0–1 that tolerates:
+- Minor OCR errors (`"Jon"` vs `"John"`)
+- Formatting differences (`"2024-01-05"` vs `"2024/01/05"`)
+- Trailing spaces or casing differences
+
+The Winkler extension adds a prefix bonus — strings that share the same first 1–4 characters score higher, which works well for names and IDs.
+
+Formula:
+```
+jaro = (m/|s1| + m/|s2| + (m - t/2)/m) / 3
+jaro_winkler = jaro + p * l * (1 - jaro)
+  where l = common prefix length (max 4), p = 0.1
+```
+
+### 3. Weighted Average Aggregation
+
+Not all fields are equally important. After scoring every field individually, the overall confidence score is a weighted average where critical fields have higher weights:
+
+| Field | Weight |
+|---|---|
+| `patient_last_name`, `patient_first_name`, `patient_date_of_birth` | 3 |
+| `tracking_number` | 4 |
+| `order_number` | 3 |
+| `patient_address`, `patient_gender`, `product_ordered` | 2 |
+| `therapist`, `primary_care_physician`, insurance blocks | 2 |
+| `source` | 0.5 |
+| `extraction_warnings` | 0.2 |
+
+### 4. Recursive Object Scoring
+
+Nested objects (insurance blocks, therapist, physician) are scored by recursively comparing their sub-fields and averaging the result. This means a partially-correct insurance block contributes a partial score rather than a binary pass/fail.
+
+### 5. Best-Match Pairing for Arrays (Line Items / Shipments)
+
+When comparing arrays (e.g. `line_items` in shipments), items are matched greedily by highest combined similarity of `sku + description + quantity`. This handles cases where the AI returns items in a different order across runs.
+
+For multiple shipments in one email, shipments are paired by `tracking_number` first, then `order_number`, before scoring each pair.
+
+### Confidence Score Interpretation
+
+| Score | Label | Meaning |
+|---|---|---|
+| 0.95 – 1.0 | Very Stable | Fields are identical or near-identical |
+| 0.80 – 0.95 | Minor Differences | Small formatting or null/value gaps |
+| 0.60 – 0.80 | Moderate Drift | Several fields parsed differently |
+| < 0.60 | High Variance | Document is ambiguous or OCR is unreliable |
+
+A `type_mismatch` (AI classified as `patient` but ground truth is `shipment`) always returns `0.0` regardless of field similarity.
+
+---
+
 ## Notes
 
 - All services are singletons (module-level exports), initialized once at startup
