@@ -40,6 +40,9 @@ app.get("/events/:documentId", (req, res) => {
 
 // ── test-case data endpoint ─────────────────────────────────────────────────
 app.get("/data/:documentId", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   try {
     const raw = await fs.readFile(
       path.join(TEST_CASES_DIR, req.params.documentId, "data.json"),
@@ -380,7 +383,11 @@ function connectSSE() {
     const ev = JSON.parse(e.data);
     handleEvent(ev);
   };
-  es.onerror = () => {};
+  es.onerror = () => {
+    es.close();
+    // Reconnect after 3 seconds — handles dropped connections during long OpenAI calls
+    setTimeout(connectSSE, 3000);
+  };
 }
 
 function handleEvent(ev) {
@@ -438,6 +445,8 @@ function handleEvent(ev) {
 
     case 'openai_processing':
       setStep('openai', 'active', \`Model: <code>\${ev.model}</code> &nbsp; Analyzing document…\`);
+      // Fallback: poll every 5s in case SSE drops before the complete event arrives
+      startCompletionPoller();
       break;
 
     case 'complete':
@@ -590,7 +599,7 @@ function buildBreakdownTable(breakdown, comparison) {
 
 // ── run selector ──────────────────────────────────────────────────────────
 async function reloadRunSelector() {
-  const res = await fetch('/data/' + DOC_ID);
+  const res = await fetch('/data/' + DOC_ID + '?t=' + Date.now());
   if (!res.ok) return;
   const data = await res.json();
   renderRunSelector(data);
@@ -638,14 +647,52 @@ function showRun(n) {
   if (run.comparison) document.getElementById('confidenceSection').classList.add('visible');
 }
 
+// ── completion poller — always running as a safety net in case SSE drops ─────
+let _pollerTimer = null;
+let _lastKnownRunCount = 0;
+
+async function pollForNewRun() {
+  try {
+    // Cache-bust to ensure browser doesn't return stale data
+    const res = await fetch('/data/' + DOC_ID + '?t=' + Date.now());
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.runs?.length > _lastKnownRunCount) {
+      _lastKnownRunCount = data.runs.length;
+      const latest = data.runs.at(-1);
+      // SSE may have missed the complete event — force the UI into the done state
+      setStep('openai', 'done', \`Classified as <strong>\${latest.result?.type}</strong>\`);
+      setStep('complete', 'done', 'Extraction complete');
+      document.getElementById('liveRunTag')?.remove();
+      renderRunSelector(data);
+      showExtractedData(latest.result);
+      if (latest.comparison) showConfidence(latest.comparison);
+      document.querySelectorAll('.run-btn').forEach((b, i, arr) => {
+        b.classList.toggle('active', i === arr.length - 1);
+      });
+    }
+  } catch {}
+}
+
+function startCompletionPoller() {
+  if (_pollerTimer) return;
+  _pollerTimer = setInterval(pollForNewRun, 3000);
+}
+
+function stopCompletionPoller() {
+  if (_pollerTimer) { clearInterval(_pollerTimer); _pollerTimer = null; }
+}
+
 // ── init ──────────────────────────────────────────────────────────────────
 connectSSE();
 reloadRunSelector().then(() => {
-  // Auto-show last run if exists
   if (window._testCaseData?.runs?.length) {
+    _lastKnownRunCount = window._testCaseData.runs.length;
     const last = window._testCaseData.runs.at(-1);
     showRun(last.runNumber);
   }
+  // Always poll as a safety net — runs continuously regardless of SSE state
+  startCompletionPoller();
 });
 </script>
 

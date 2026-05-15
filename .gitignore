@@ -37,3 +37,5 @@ token.json
 credentialsv2.json
 
 .env.example
+
+test-cases
