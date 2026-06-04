@@ -427,6 +427,8 @@ Return:
       "first_name": "string or null",
       "last_name": "string or null"
     },
+    "others": ["array of strings — any extra info present in the document that doesn't fit the fields above (e.g., 'Allergies: latex', 'Height: 5\\'9\"', 'Preferred contact: text')"],
+    "confidence_score": "number 0-100 — your self-rated confidence in the overall accuracy of this patient extraction",
     "extraction_warnings": ["array of any issues or uncertainties encountered"]
   }
 }
@@ -476,7 +478,9 @@ Rules:
 12. If secondary or tertiary insurance are not explicitly present, set them to null and do NOT copy from primary insurance
 13. Product ordered may appear in email body, attached POC, or referral cover sheet
 14. Set line_items to [] when not present (preferred for schema stability)
-15. Always return valid JSON`;
+15. For patient emails: populate "others" with any useful information found in the document that does not map to any defined field (e.g., allergies, height, weight, language preference, preferred contact method, notes from the referrer). Each entry is a single plain-text string. Do NOT drop information just because there is no dedicated field for it. Return [] if nothing extra was found.
+16. For patient emails: populate "confidence_score" with an integer from 0 to 100 representing your overall confidence in this extraction. Lower the score when key fields are missing, OCR/text was unclear, values were ambiguous, or you had to guess. Raise it when most fields are clearly present and unambiguous in the source. This is your own self-assessment — be honest.
+17. Always return valid JSON`;
   }
 
   buildUserPrompt(extractedContent) {

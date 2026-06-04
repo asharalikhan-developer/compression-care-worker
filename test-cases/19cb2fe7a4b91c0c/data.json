@@ -249,6 +249,721 @@
           }
         }
       }
+    },
+    {
+      "runNumber": 3,
+      "timestamp": "2026-05-15T14:12:57.107Z",
+      "result": {
+        "is_relevant": true,
+        "type": "patient",
+        "patient": {
+          "source": "attachment: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF",
+          "patient_first_name": "Kristi",
+          "patient_last_name": "Morgan",
+          "patient_address": "1040 Beaverdale Rd NE, Dalton, GA 30721-2410",
+          "patient_gender": "Female",
+          "patient_date_of_birth": "1969-06-05",
+          "patient_email_address": "krismorg14@gmail.com",
+          "primary_insurance": {
+            "id_number": "SJN41592216",
+            "name": "Anthem Blue Cross Blue Shield / BCBS Managed GA",
+            "group_number": "GA80392NAS"
+          },
+          "secondary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "tertiary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "product_ordered": "Compression garments: day use 3 sets of custom flat or circular knit knee high or thigh high compression garments, compression panty style garment, or compression capri; night use one knee-high Tribute Wrap Size Large Regular for left and right legs; donning aids for independent management of garments.",
+          "therapist": {
+            "first_name": "David",
+            "last_name": "Barron",
+            "email_address": "Dbarron@hhcs.org"
+          },
+          "primary_care_physician": {
+            "first_name": "Ashley",
+            "last_name": "Gonicea"
+          },
+          "others": [
+            "Patient full name appears as Kristi Renee Morgan / Kristi R. Morgan.",
+            "Patient phone: 706-618-2611.",
+            "MRN: 266453.",
+            "Visit type: PT Re-Evaluation.",
+            "Visit/date of letter of medical necessity: 2026-02-11.",
+            "Referring/prescribing physician: Zorana Mrsic, MD, NPI 1760823041, phone 706-226-3434, fax 706-226-4820, address 1436 Broadrick Drive, Dalton, GA 30720.",
+            "Provider/therapist credentials: PT, CLT-LANA.",
+            "Facility: Bradley Whiteside Rehabilitation, 1225 Broadrick Drive, Dalton, GA 30720-2504; phone 706-272-6199.",
+            "Diagnosis code: I89.0 - Other lymphedema; includes praecox, secondary, acquired/chronic, elephantiasis.",
+            "Extremity: bilateral lower.",
+            "Clinical justification/signature note: patient requires garments to maintain lymphedema symptoms due to volume containment needs and skin sensitivity.",
+            "Duration: 12 months / permanent use.",
+            "Refills: 2.",
+            "Language: English.",
+            "Employer: Whitfield County, full time.",
+            "No secondary coverage noted.",
+            "Guarantor: Kristi Renee Morgan; relationship: self.",
+            "Emergency contact: James Morgan, spouse, 706-618-2612.",
+            "Emergency contact: Ronnie Hicks, father, 706-271-8625.",
+            "Driver license demographic details: Georgia DL number 052036711; height 5'05\"; weight 220 lb; eyes hazel; expiration 2030-06-05; issue date 2022-04-20.",
+            "Insurance card notes: plan appears to be Blue Open Access POS; effective date appears to be 2023-07-01; plan code 040."
+          ],
+          "confidence_score": 86,
+          "extraction_warnings": [
+            "Fax images are low-resolution with artifacts; some small text is difficult to read.",
+            "Primary insurance ID was interpreted as SJN41592216 but is somewhat unclear on the fax/insurance card.",
+            "Patient email was interpreted as krismorg14@gmail.com but is slightly unclear due to fax quality.",
+            "Both an explicitly labeled PCP, Ashley Gonicea, NP, and a referring/prescribing physician, Zorana Mrsic, MD, appear in the document; primary_care_physician was populated with the explicitly labeled PCP, and the referring physician was placed in others."
+          ],
+          "file_url": [
+            "https://res.cloudinary.com/dnrv6dehd/raw/upload/v1778854322/fax-documents/1778854321144_83924ab1-a499-4ef0-a973-62ed22c9295b.pdf"
+          ]
+        }
+      },
+      "comparison": {
+        "confidenceScore": 0.923,
+        "label": "Minor Differences",
+        "type": "patient",
+        "breakdown": {
+          "patient_first_name": 0.9,
+          "patient_last_name": 1,
+          "patient_date_of_birth": 1,
+          "patient_address": 1,
+          "patient_gender": 1,
+          "patient_email_address": 1,
+          "product_ordered": 0.9053798850524842,
+          "source": 1,
+          "primary_insurance": {
+            "score": 0.9055278358925776,
+            "fieldScores": {
+              "id_number": 0.8992424242424243,
+              "name": 0.820483789260385,
+              "group_number": 1
+            }
+          },
+          "secondary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "tertiary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "therapist": {
+            "score": 1,
+            "fieldScores": {
+              "first_name": 1,
+              "last_name": 1,
+              "email_address": 1
+            }
+          },
+          "primary_care_physician": {
+            "score": 0.28095238095238095,
+            "fieldScores": {
+              "first_name": 0,
+              "last_name": 0.5619047619047619
+            }
+          }
+        }
+      },
+      "logs": [
+        {
+          "ts": 1778854312570,
+          "level": "info",
+          "message": "📧 Fetching email with ID: 19cb2fe7a4b91c0c"
+        },
+        {
+          "ts": 1778854313799,
+          "level": "info",
+          "message": "\n📧 Processing email: \"Fwd: eFax message from \"7062172054\" - 10 page(s), Caller-ID: 17062172054\" from Asad Baig <asad@geeksofkolachi.com>"
+        },
+        {
+          "ts": 1778854313799,
+          "level": "info",
+          "message": "  📄 Extracting content..."
+        },
+        {
+          "ts": 1778854313799,
+          "level": "info",
+          "message": "  📝 Found plain text email body"
+        },
+        {
+          "ts": 1778854313801,
+          "level": "info",
+          "message": "  📝 Extracted text from HTML email body"
+        },
+        {
+          "ts": 1778854313801,
+          "level": "info",
+          "message": "  📄 Email body content length: 2936 characters"
+        },
+        {
+          "ts": 1778854313801,
+          "level": "info",
+          "message": "  📄 Processing PDF: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854313954,
+          "level": "warn",
+          "message": "Could not extract any content from PDF"
+        },
+        {
+          "ts": 1778854313954,
+          "level": "info",
+          "message": "  📸 PDF appears to be fully scanned/image-based, fixing orientation and uploading to Cloudinary"
+        },
+        {
+          "ts": 1778854313955,
+          "level": "info",
+          "message": "🚀 Starting process for: /tmp/input_1778854313954_83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854314111,
+          "level": "info",
+          "message": "🔍 Analyzing pages..."
+        },
+        {
+          "ts": 1778854314290,
+          "level": "info",
+          "message": "  Processing page 1..."
+        },
+        {
+          "ts": 1778854314924,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 7.5)"
+        },
+        {
+          "ts": 1778854315127,
+          "level": "info",
+          "message": "  Processing page 2..."
+        },
+        {
+          "ts": 1778854315646,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 4.6)"
+        },
+        {
+          "ts": 1778854315795,
+          "level": "info",
+          "message": "  Processing page 3..."
+        },
+        {
+          "ts": 1778854316432,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 5.7)"
+        },
+        {
+          "ts": 1778854316593,
+          "level": "info",
+          "message": "  Processing page 4..."
+        },
+        {
+          "ts": 1778854317304,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 1.9)"
+        },
+        {
+          "ts": 1778854317475,
+          "level": "info",
+          "message": "  Processing page 5..."
+        },
+        {
+          "ts": 1778854317995,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 5.7)"
+        },
+        {
+          "ts": 1778854318156,
+          "level": "info",
+          "message": "  Processing page 6..."
+        },
+        {
+          "ts": 1778854318492,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 1.9)"
+        },
+        {
+          "ts": 1778854318662,
+          "level": "info",
+          "message": "  Processing page 7..."
+        },
+        {
+          "ts": 1778854319198,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 8.3)"
+        },
+        {
+          "ts": 1778854319335,
+          "level": "info",
+          "message": "  Processing page 8..."
+        },
+        {
+          "ts": 1778854319671,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 1.8)"
+        },
+        {
+          "ts": 1778854319897,
+          "level": "info",
+          "message": "  Processing page 9..."
+        },
+        {
+          "ts": 1778854320350,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 2.0)"
+        },
+        {
+          "ts": 1778854320560,
+          "level": "info",
+          "message": "  Processing page 10..."
+        },
+        {
+          "ts": 1778854321133,
+          "level": "info",
+          "message": "    ➔ ✅ FIXING: Rotated 90° (Confidence: 3.8)"
+        },
+        {
+          "ts": 1778854321135,
+          "level": "info",
+          "message": "currentRotation 0"
+        },
+        {
+          "ts": 1778854321135,
+          "level": "info",
+          "message": "targetRotation 90"
+        },
+        {
+          "ts": 1778854321144,
+          "level": "info",
+          "message": "\n✅ Finished! Saved to: /tmp/output_1778854313954_83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854323344,
+          "level": "info",
+          "message": "✅ PDF uploaded to Cloudinary: https://res.cloudinary.com/dnrv6dehd/raw/upload/v1778854322/fax-documents/1778854321144_83924ab1-a499-4ef0-a973-62ed22c9295b.pdf"
+        },
+        {
+          "ts": 1778854323345,
+          "level": "info",
+          "message": "  📠 Fax PDFs: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854323345,
+          "level": "info",
+          "message": "  ☁️  Uploading 1 fax PDF(s) to Cloudinary..."
+        },
+        {
+          "ts": 1778854323345,
+          "level": "info",
+          "message": "     🔗 https://res.cloudinary.com/dnrv6dehd/raw/upload/v1778854322/fax-documents/1778854321144_83924ab1-a499-4ef0-a973-62ed22c9295b.pdf"
+        },
+        {
+          "ts": 1778854323345,
+          "level": "info",
+          "message": "  🤖 Analyzing with OpenAI (gpt-5 (Response API))..."
+        },
+        {
+          "ts": 1778854377102,
+          "level": "info",
+          "message": "  ⏱️ Content Extraction: 63302ms"
+        },
+        {
+          "ts": 1778854377102,
+          "level": "info",
+          "message": "  👥 Found 1 patient(s)"
+        },
+        {
+          "ts": 1778854377102,
+          "level": "info",
+          "message": "  📦 Found 0 shipment(s)"
+        },
+        {
+          "ts": 1778854377102,
+          "level": "info",
+          "message": "     1. Kristi (from: attachment: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF)"
+        },
+        {
+          "ts": 1778854377102,
+          "level": "info",
+          "message": "  🧠 AI self-rated confidence: 86/100"
+        },
+        {
+          "ts": 1778854377102,
+          "level": "info",
+          "message": "  ✅ Email processed successfully!"
+        }
+      ]
+    },
+    {
+      "runNumber": 4,
+      "timestamp": "2026-05-15T14:14:22.106Z",
+      "result": {
+        "is_relevant": true,
+        "type": "patient",
+        "patient": {
+          "source": "attachment: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF",
+          "patient_first_name": "Kristi",
+          "patient_last_name": "Morgan",
+          "patient_address": "1040 Beaverdale Rd NE, Dalton, GA 30721-2410",
+          "patient_gender": "Female",
+          "patient_date_of_birth": "1969-06-05",
+          "patient_email_address": "krismorg14@gmail.com",
+          "primary_insurance": {
+            "id_number": "SJNA156W2216",
+            "name": "Anthem Blue Cross Blue Shield / BCBS GA - Anthem Silver Plan",
+            "group_number": "GA8032NAS"
+          },
+          "secondary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "tertiary_insurance": {
+            "id_number": null,
+            "name": null,
+            "group_number": null
+          },
+          "product_ordered": "Tribute Wraps Large Regular knee high for left and right legs; day use compression garments including 3 sets of custom flat or circular knit knee-high or thigh-high compression garments, compression panty-style garment, or compression capri; donning aids",
+          "therapist": {
+            "first_name": "David",
+            "last_name": "Barron",
+            "email_address": "DBarron@hhcs.org"
+          },
+          "primary_care_physician": {
+            "first_name": "Ashley",
+            "last_name": "Gonicea"
+          },
+          "others": [
+            "Patient middle name: Renee",
+            "Patient phone/mobile: 706-618-2611",
+            "MRN: 266453",
+            "PCP listed as Ashley Gonicea, NP",
+            "Referring physician: Zorana Mrsic, MD",
+            "Referring physician phone: 706-226-3434",
+            "Referring physician fax: 706-226-4820",
+            "Referring physician NPI: 1760823041",
+            "Referring physician address: 1436 Broadrick Drive, Dalton, GA 30720",
+            "Therapist credentials: PT, CLT-LANA",
+            "Provider/location: Bradley Whiteside Rehabilitation / Bradley Wellness Center, 1225 Broadrick Drive, Dalton, GA 30720-2504",
+            "Diagnosis code: I89.0 - Other lymphedema (praecox, secondary, acquired/chronic, elephantiasis)",
+            "Extremity: Bilateral lower",
+            "Medical necessity/signature note: Patient will require these garments to maintain lymphedema symptoms due to volume containment needs and skin sensitivity",
+            "Duration: 12 months / permanent use",
+            "Refills: 2",
+            "Language: English",
+            "Emergency contact: James Morgan, spouse, 706-618-2612",
+            "Emergency contact: Ronnie Hicks, father, 706-271-8625",
+            "Employer: Whitfield County, full time",
+            "Driver license number: 052036711",
+            "Driver license state: Georgia",
+            "Driver license expiration: 2030-06-05",
+            "Driver license issue date: 2022-04-20",
+            "Height: 5'05\"",
+            "Weight: 220 lb",
+            "Eye color: HAZ",
+            "Organ donor: Yes",
+            "Insurance benefits effective date: 2025-01-01",
+            "Insurance plan code: 102",
+            "RxBIN/RxPCN: 004336/ADV",
+            "RxGRP: SX0088",
+            "Plan type noted: HRA Plan; State Health Network - SHBP; Blue Open Access POS",
+            "No secondary coverage noted"
+          ],
+          "confidence_score": 88,
+          "extraction_warnings": [
+            "Fax image quality is low with some faint/blurred text and blank/noisy pages.",
+            "PCP name appears as Ashley Gonicea, NP; spelling is somewhat unclear due to fax quality.",
+            "Insurance carrier appears as Anthem Blue Cross Blue Shield / BCBS GA; exact payer naming may vary.",
+            "Primary care physician field populated with listed PCP; referring physician Zorana Mrsic, MD is included in others because both PCP and referring physician were present."
+          ],
+          "file_url": [
+            "https://res.cloudinary.com/dnrv6dehd/raw/upload/v1778854408/fax-documents/1778854406709_83924ab1-a499-4ef0-a973-62ed22c9295b.pdf"
+          ]
+        }
+      },
+      "comparison": {
+        "confidenceScore": 0.9139,
+        "label": "Minor Differences",
+        "type": "patient",
+        "breakdown": {
+          "patient_first_name": 0.9,
+          "patient_last_name": 1,
+          "patient_date_of_birth": 1,
+          "patient_address": 1,
+          "patient_gender": 1,
+          "patient_email_address": 1,
+          "product_ordered": 0.7650410447160363,
+          "source": 1,
+          "primary_insurance": {
+            "score": 0.9197217068645641,
+            "fieldScores": {
+              "id_number": 0.9303030303030303,
+              "name": 0.8435714285714286,
+              "group_number": 0.98
+            }
+          },
+          "secondary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "tertiary_insurance": {
+            "score": 1,
+            "fieldScores": {
+              "id_number": 1,
+              "name": 1,
+              "group_number": 1
+            }
+          },
+          "therapist": {
+            "score": 1,
+            "fieldScores": {
+              "first_name": 1,
+              "last_name": 1,
+              "email_address": 1
+            }
+          },
+          "primary_care_physician": {
+            "score": 0.28095238095238095,
+            "fieldScores": {
+              "first_name": 0,
+              "last_name": 0.5619047619047619
+            }
+          }
+        }
+      },
+      "logs": [
+        {
+          "ts": 1778854401443,
+          "level": "info",
+          "message": "📧 Fetching email with ID: 19cb2fe7a4b91c0c"
+        },
+        {
+          "ts": 1778854402540,
+          "level": "info",
+          "message": "\n📧 Processing email: \"Fwd: eFax message from \"7062172054\" - 10 page(s), Caller-ID: 17062172054\" from Asad Baig <asad@geeksofkolachi.com>"
+        },
+        {
+          "ts": 1778854402540,
+          "level": "info",
+          "message": "  📄 Extracting content..."
+        },
+        {
+          "ts": 1778854402540,
+          "level": "info",
+          "message": "  📝 Found plain text email body"
+        },
+        {
+          "ts": 1778854402541,
+          "level": "info",
+          "message": "  📝 Extracted text from HTML email body"
+        },
+        {
+          "ts": 1778854402541,
+          "level": "info",
+          "message": "  📄 Email body content length: 2936 characters"
+        },
+        {
+          "ts": 1778854402541,
+          "level": "info",
+          "message": "  📄 Processing PDF: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854402636,
+          "level": "warn",
+          "message": "Could not extract any content from PDF"
+        },
+        {
+          "ts": 1778854402636,
+          "level": "info",
+          "message": "  📸 PDF appears to be fully scanned/image-based, fixing orientation and uploading to Cloudinary"
+        },
+        {
+          "ts": 1778854402637,
+          "level": "info",
+          "message": "🚀 Starting process for: /tmp/input_1778854402636_83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854402788,
+          "level": "info",
+          "message": "🔍 Analyzing pages..."
+        },
+        {
+          "ts": 1778854402887,
+          "level": "info",
+          "message": "  Processing page 1..."
+        },
+        {
+          "ts": 1778854403283,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 6.0)"
+        },
+        {
+          "ts": 1778854403364,
+          "level": "info",
+          "message": "  Processing page 2..."
+        },
+        {
+          "ts": 1778854403699,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 5.1)"
+        },
+        {
+          "ts": 1778854403787,
+          "level": "info",
+          "message": "  Processing page 3..."
+        },
+        {
+          "ts": 1778854404152,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 1.7)"
+        },
+        {
+          "ts": 1778854404231,
+          "level": "info",
+          "message": "  Processing page 4..."
+        },
+        {
+          "ts": 1778854404575,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 2.5)"
+        },
+        {
+          "ts": 1778854404654,
+          "level": "info",
+          "message": "  Processing page 5..."
+        },
+        {
+          "ts": 1778854404981,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 6.2)"
+        },
+        {
+          "ts": 1778854405051,
+          "level": "info",
+          "message": "  Processing page 6..."
+        },
+        {
+          "ts": 1778854405218,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 0.6)"
+        },
+        {
+          "ts": 1778854405291,
+          "level": "info",
+          "message": "  Processing page 7..."
+        },
+        {
+          "ts": 1778854405628,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 7.8)"
+        },
+        {
+          "ts": 1778854405692,
+          "level": "info",
+          "message": "  Processing page 8..."
+        },
+        {
+          "ts": 1778854405860,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 0.8)"
+        },
+        {
+          "ts": 1778854405976,
+          "level": "info",
+          "message": "  Processing page 9..."
+        },
+        {
+          "ts": 1778854406202,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 0.9)"
+        },
+        {
+          "ts": 1778854406311,
+          "level": "info",
+          "message": "  Processing page 10..."
+        },
+        {
+          "ts": 1778854406702,
+          "level": "info",
+          "message": "    ➔ Upright (Confidence: 0.5)"
+        },
+        {
+          "ts": 1778854406709,
+          "level": "info",
+          "message": "\n✅ Finished! Saved to: /tmp/output_1778854402636_83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854409046,
+          "level": "info",
+          "message": "✅ PDF uploaded to Cloudinary: https://res.cloudinary.com/dnrv6dehd/raw/upload/v1778854408/fax-documents/1778854406709_83924ab1-a499-4ef0-a973-62ed22c9295b.pdf"
+        },
+        {
+          "ts": 1778854409046,
+          "level": "info",
+          "message": "  📠 Fax PDFs: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF"
+        },
+        {
+          "ts": 1778854409046,
+          "level": "info",
+          "message": "  ☁️  Uploading 1 fax PDF(s) to Cloudinary..."
+        },
+        {
+          "ts": 1778854409047,
+          "level": "info",
+          "message": "     🔗 https://res.cloudinary.com/dnrv6dehd/raw/upload/v1778854408/fax-documents/1778854406709_83924ab1-a499-4ef0-a973-62ed22c9295b.pdf"
+        },
+        {
+          "ts": 1778854409047,
+          "level": "info",
+          "message": "  🤖 Analyzing with OpenAI (gpt-5 (Response API))..."
+        },
+        {
+          "ts": 1778854462099,
+          "level": "info",
+          "message": "  ⏱️ Content Extraction: 59559ms"
+        },
+        {
+          "ts": 1778854462099,
+          "level": "info",
+          "message": "  👥 Found 1 patient(s)"
+        },
+        {
+          "ts": 1778854462099,
+          "level": "info",
+          "message": "  📦 Found 0 shipment(s)"
+        },
+        {
+          "ts": 1778854462099,
+          "level": "info",
+          "message": "     1. Kristi (from: attachment: 83924ab1-a499-4ef0-a973-62ed22c9295b.PDF)"
+        },
+        {
+          "ts": 1778854462100,
+          "level": "info",
+          "message": "  🧠 AI self-rated confidence: 88/100"
+        },
+        {
+          "ts": 1778854462100,
+          "level": "info",
+          "message": "  ✅ Email processed successfully!"
+        }
+      ]
     }
   ],
   "groundTruthSetAt": "2026-05-14T11:40:27.043Z"

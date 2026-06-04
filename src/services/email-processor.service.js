@@ -8,6 +8,7 @@ import mongoose from 'mongoose';
 import cloudinaryService from './cloudinary.service.js';
 import { recordRun } from '../utils/test-case-recorder.js';
 import bus from '../utils/processing-events.js';
+import { runWithLogContext, flushLogs } from '../utils/processing-logger.js';
 
 function emit(documentId, type, payload = {}) {
   bus.emit('event', { documentId, type, ts: Date.now(), ...payload });
@@ -81,14 +82,15 @@ class EmailProcessorService {
   }
  
   async processEmail(email) {
-    console.log(`\n📧 Processing email: "${email.subject}" from ${email.from}`);
     const docId = email.id;
+    const log = (msg) => console.log(msg);
+    log(`\n📧 Processing email: "${email.subject}" from ${email.from}`);
 
     emit(docId, 'email_received', { subject: email.subject, from: email.from, date: email.date });
 
     try {
-      console.log('  📄 Extracting content...');
-      console.time('⏱️ Content Extraction');
+      log('  📄 Extracting content...');
+      const t0 = Date.now();
       emit(docId, 'extracting');
       const extractedContent = await contentExtractorService.extractContent(email);
 
@@ -96,26 +98,29 @@ class EmailProcessorService {
       const attachments = extractedContent.attachmentContents?.map(a => a.filename) || [];
       const images = extractedContent.images?.map(i => i.filename) || [];
       const faxes = extractedContent.faxattachments?.map(f => ({ filename: f.filename, url: f.url })) || [];
+      if (attachments.length) log(`  📎 Attachments: ${attachments.join(', ')}`);
+      if (images.length) log(`  🖼  Images: ${images.join(', ')}`);
+      if (faxes.length) log(`  📠 Fax PDFs: ${faxes.map(f => f.filename).join(', ')}`);
       emit(docId, 'extracted', { attachments, images, faxCount: faxes.length });
 
       // Cloudinary uploads (fax PDFs) — emit URL for each
       if (faxes.length) {
+        log(`  ☁️  Uploading ${faxes.length} fax PDF(s) to Cloudinary...`);
         emit(docId, 'cloudinary_uploading', { files: faxes.map(f => f.filename) });
+        for (const f of faxes) log(`     🔗 ${f.url}`);
         emit(docId, 'cloudinary_uploaded', { files: faxes });
       }
 
-      console.log('  🤖 Analyzing with OpenAI...');
       const model = faxes.length ? 'gpt-5 (Response API)' : 'gpt-4.1-mini (Chat Completions)';
+      log(`  🤖 Analyzing with OpenAI (${model})...`);
       emit(docId, 'openai_processing', { model });
       const medicalDetails = await openaiService.extractMedicalDetails(extractedContent);
-      console.timeEnd('⏱️ Content Extraction');
-
-      // Record this parse run against your ground truth (if set) in test-cases/
-      const { comparison } = await recordRun(email.id, medicalDetails).catch(() => ({ comparison: null }));
+      log(`  ⏱️ Content Extraction: ${Date.now() - t0}ms`);
 
       if (medicalDetails.is_relevant === false) {
-        console.log(`  ⏭️  Skipping non-medical email: ${medicalDetails.reason || 'Not relevant'}`);
+        log(`  ⏭️  Skipping non-medical email: ${medicalDetails.reason || 'Not relevant'}`);
         emit(docId, 'complete', { type: 'not_relevant', reason: medicalDetails.reason });
+        await recordRun(email.id, medicalDetails, { logs: flushLogs(docId) }).catch(() => ({}));
         return {
           success: true,
           isRelevant: false,
@@ -130,14 +135,19 @@ class EmailProcessorService {
 
       const patientCount = medicalDetails.patient ? 1 : 0;
       const shipmentCount = medicalDetails.total_shipments_found || medicalDetails.shipments?.length || 0;
-      console.log(`  👥 Found ${patientCount} patient(s)`);
-      console.log(`  📦 Found ${shipmentCount} shipment(s)`);
+      log(`  👥 Found ${patientCount} patient(s)`);
+      log(`  📦 Found ${shipmentCount} shipment(s)`);
 
       if (medicalDetails.patient) {
-          const name = medicalDetails.patient?.patient_first_name || 'Unknown';
-          const source = medicalDetails.patient?.source || 'Unknown source';
-          console.log(`     1. ${name} (from: ${source})`);
-        const result = {
+        const name = medicalDetails.patient?.patient_first_name || 'Unknown';
+        const source = medicalDetails.patient?.source || 'Unknown source';
+        log(`     1. ${name} (from: ${source})`);
+        medicalDetails.patient.file_url = (extractedContent.faxattachments || []).map(f => f.url).filter(Boolean);
+        if (typeof medicalDetails.patient.confidence_score === 'number') {
+          log(`  🧠 AI self-rated confidence: ${medicalDetails.patient.confidence_score}/100`);
+        }
+        log('  ✅ Email processed successfully!');
+        const patientResult = {
           success: true,
           isRelevant: true,
           emailId: email.id,
@@ -148,9 +158,10 @@ class EmailProcessorService {
           totalPatientsFound: patientCount,
           extractedData: medicalDetails,
         };
-        emit(docId, 'complete', { type: 'patient', confidenceScore: comparison?.confidenceScore ?? null, label: comparison?.label ?? null });
-        console.log('  ✅ Email processed successfully!');
-        return result;
+        const { comparison } = await recordRun(email.id, medicalDetails, { logs: flushLogs(docId) }).catch(() => ({ comparison: null }));
+        emit(docId, 'payload', { document: patientResult });
+        emit(docId, 'complete', { type: 'patient', confidenceScore: comparison?.confidenceScore ?? null, label: comparison?.label ?? null, aiConfidence: medicalDetails.patient?.confidence_score ?? null });
+        return patientResult;
       }
 
       if (medicalDetails.shipments) {
@@ -158,9 +169,10 @@ class EmailProcessorService {
           const shipper = s.shipper || 'Unknown Shipper';
           const tracking = s.tracking_number || 'No Tracking';
           const shipDate = s.ship_date || 'Unknown Date';
-          console.log(`     ${i + 1}. Shipment via ${shipper} on ${shipDate} (Tracking: ${tracking})`);
+          log(`     ${i + 1}. Shipment via ${shipper} on ${shipDate} (Tracking: ${tracking})`);
         });
-        const result = {
+        log('  ✅ Email processed successfully!');
+        const shipmentResult = {
           success: true,
           isRelevant: true,
           emailId: email.id,
@@ -171,14 +183,14 @@ class EmailProcessorService {
           totalShipmentsFound: shipmentCount,
           extractedData: medicalDetails,
         };
+        const { comparison } = await recordRun(email.id, medicalDetails, { logs: flushLogs(docId) }).catch(() => ({ comparison: null }));
+        emit(docId, 'payload', { document: shipmentResult });
         emit(docId, 'complete', { type: 'shipment', confidenceScore: comparison?.confidenceScore ?? null, label: comparison?.label ?? null });
-        console.log('  ✅ Email processed successfully!');
-        return result;
+        return shipmentResult;
       }
-      
-     
     } catch (error) {
-      console.error(`  ❌ Error processing email: ${error.message}`);
+      log(`  ❌ Error processing email: ${error.message}`, 'error');
+      flushLogs(docId);
       emit(docId, 'error', { message: error.message });
       return {
         success: false,
@@ -199,22 +211,32 @@ class EmailProcessorService {
    * Fetches email from Gmail API, processes it, and saves to MongoDB
    */
   async processEmailById(messageId) {
-    console.log(`📧 Fetching email with ID: ${messageId}`);
-    
-    try {
-      const email = await gmailService.getEmailDetails(messageId);
-      const result = await this.processEmail(email);
-      
-      // Save result to MongoDB if relevant
-      if (result.isRelevant === true) {
-        await this.saveResult([result]);
+    return runWithLogContext(messageId, async () => {
+      console.log(`📧 Fetching email with ID: ${messageId}`);
+
+      try {
+        const email = await gmailService.getEmailDetails(messageId);
+        const result = await this.processEmail(email);
+
+        // Save result to MongoDB if relevant
+        if (result.isRelevant === true) {
+          const mongoId = await this.saveResult([result]);
+          if (mongoId) {
+            console.log(`  💾 MongoDB document id: ${mongoId}`);
+            emit(messageId, 'saved', {
+              mongoId: String(mongoId),
+              savedAt: new Date().toISOString(),
+              document: result,
+            });
+          }
+        }
+
+        return result;
+      } catch (error) {
+        console.error(`❌ Error processing email ${messageId}:`, error.message);
+        throw error;
       }
-      
-      return result;
-    } catch (error) {
-      console.error(`❌ Error processing email ${messageId}:`, error.message);
-      throw error;
-    }
+    });
   }
 
   /**

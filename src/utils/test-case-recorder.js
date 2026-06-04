@@ -123,7 +123,7 @@ export async function promoteRunAsGroundTruth(documentId, runNumber) {
  * @param {object} aiResult   - the raw AI parse output
  * @returns {{ runNumber, comparison }}
  */
-export async function recordRun(documentId, aiResult) {
+export async function recordRun(documentId, aiResult, { logs = [] } = {}) {
   await ensureDir(documentId);
   const data = (await readFile(documentId)) ?? {
     documentId,
@@ -142,6 +142,7 @@ export async function recordRun(documentId, aiResult) {
     timestamp: new Date().toISOString(),
     result: aiResult,
     comparison,
+    logs,
   });
 
   await writeFile(documentId, data);

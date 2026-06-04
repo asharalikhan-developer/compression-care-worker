@@ -243,6 +243,21 @@ function livePageHTML(documentId) {
     .warnings ul { padding-left:18px; }
     .warnings li { font-size:13px; color:#78350f; margin-bottom:3px; }
 
+    /* ── logs panel ── */
+    .logs-card {
+      background: #0b1020; color: #d6deeb; border-radius: 12px;
+      padding: 16px 18px; margin-top: 20px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; line-height: 1.55; max-height: 360px; overflow-y: auto;
+      border: 1px solid #1f2a44;
+    }
+    .logs-card .log-line { white-space: pre-wrap; word-break: break-word; }
+    .logs-card .log-line.error { color: #ff8b8b; }
+    .logs-title { color:#9ca3af; font-size:11px; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px; }
+    .ai-confidence-badge {
+      display:inline-block; padding:4px 10px; border-radius:999px;
+      background:#eef2ff; color:#3730a3; font-weight:700; font-size:12px;
+    }
+
     /* ── back link ── */
     .back { display: inline-flex; align-items: center; gap: 6px; color: #6b7280; font-size: 13px; text-decoration: none; margin-bottom: 20px; }
     .back:hover { color: #1f2937; }
@@ -290,10 +305,10 @@ function livePageHTML(documentId) {
   </div>
 
   <!-- Two-column layout -->
-  <div style="display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start">
+  <div style="display:grid;grid-template-columns:340px minmax(0,1fr);gap:24px;align-items:start">
 
     <!-- Pipeline -->
-    <div>
+    <div style="min-width:0">
       <div class="section-title">Processing Pipeline</div>
       <div class="pipeline" id="pipeline">
         ${pipelineStepsHTML()}
@@ -301,7 +316,7 @@ function livePageHTML(documentId) {
     </div>
 
     <!-- Right side: waiting / extracted data / confidence -->
-    <div>
+    <div style="min-width:0">
       <div id="waitingMsg" class="waiting-overlay">
         <div style="font-size:32px;margin-bottom:12px">⏳</div>
         Parse the email to see live results here
@@ -310,6 +325,17 @@ function livePageHTML(documentId) {
       <div id="dataCard" class="data-card">
         <div class="section-title">Extracted Data</div>
         <div id="dataGrid"></div>
+      </div>
+
+      <div id="mongoCard" class="data-card" style="margin-top:20px">
+        <div class="section-title">📦 Payload</div>
+        <div id="mongoMeta" style="font-size:12px;color:#6b7280;margin-bottom:10px"></div>
+        <pre id="mongoJson" style="background:#0b1020;color:#d6deeb;padding:14px;border-radius:8px;font-size:12px;line-height:1.55;max-height:360px;overflow:auto;font-family:ui-monospace,'SF Mono',Menlo,monospace;white-space:pre-wrap;word-break:break-word"></pre>
+      </div>
+
+      <div id="logsCard" class="logs-card" style="display:none">
+        <div class="logs-title">Processing Logs</div>
+        <div id="logsBody"></div>
       </div>
 
       <div id="confidenceSection" class="confidence-section" style="margin-top:20px">
@@ -372,8 +398,49 @@ function resetPipeline() {
   document.getElementById('dataCard').classList.remove('visible');
   document.getElementById('confidenceSection').classList.remove('visible');
   document.getElementById('waitingMsg').style.display = 'block';
+  clearLogs();
+  clearMongo();
   // Clear run selector — a fresh live run is starting
   document.querySelectorAll('.run-btn').forEach(b => b.classList.remove('active'));
+}
+
+function clearLogs() {
+  document.getElementById('logsBody').innerHTML = '';
+  document.getElementById('logsCard').style.display = 'none';
+}
+
+function showMongoDocument(doc, meta) {
+  if (!doc) return;
+  const card = document.getElementById('mongoCard');
+  card.classList.add('visible');
+  card.style.display = 'block';
+  document.getElementById('mongoMeta').textContent = meta || '';
+  document.getElementById('mongoJson').textContent = JSON.stringify(doc, null, 2);
+}
+
+function clearMongo() {
+  document.getElementById('mongoCard').classList.remove('visible');
+  document.getElementById('mongoCard').style.display = 'none';
+  document.getElementById('mongoJson').textContent = '';
+  document.getElementById('mongoMeta').textContent = '';
+}
+
+function appendLogLine(entry) {
+  const card = document.getElementById('logsCard');
+  const body = document.getElementById('logsBody');
+  card.style.display = 'block';
+  const line = document.createElement('div');
+  line.className = 'log-line' + (entry.level === 'error' ? ' error' : '');
+  const time = new Date(entry.ts).toLocaleTimeString();
+  line.textContent = '[' + time + '] ' + entry.message;
+  body.appendChild(line);
+  card.scrollTop = card.scrollHeight;
+}
+
+function renderLogs(logs) {
+  clearLogs();
+  if (!logs?.length) return;
+  for (const entry of logs) appendLogLine(entry);
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────
@@ -460,10 +527,23 @@ function handleEvent(ev) {
           const latest = data.runs.at(-1);
           showExtractedData(latest.result);
           if (latest.comparison) showConfidence(latest.comparison);
+          // Don't overwrite live-streamed logs — they're already in the panel
           const btns = document.querySelectorAll('.run-btn');
           btns[btns.length - 1]?.classList.add('active');
         }
       });
+      break;
+
+    case 'log':
+      appendLogLine(ev);
+      break;
+
+    case 'payload':
+      showMongoDocument(ev.document, \`Final payload · \${new Date().toLocaleTimeString()}\`);
+      break;
+
+    case 'saved':
+      showMongoDocument(ev.document, \`💾 Saved to MongoDB · ID: \${ev.mongoId} · \${new Date(ev.savedAt).toLocaleTimeString()}\`);
       break;
 
     case 'error':
@@ -484,6 +564,11 @@ function showExtractedData(data) {
   const s = data.shipments?.[0];
 
   if (p) {
+    const aiScore = typeof p.confidence_score === 'number' ? p.confidence_score : null;
+    const aiBadge = aiScore !== null
+      ? \`<div style="margin-bottom:14px"><span class="ai-confidence-badge">🧠 AI Confidence: \${aiScore}/100</span></div>\`
+      : '';
+    grid.innerHTML = aiBadge;
     const fields = [
       ['First Name', p.patient_first_name],
       ['Last Name', p.patient_last_name],
@@ -497,13 +582,17 @@ function showExtractedData(data) {
       ['Therapist', [p.therapist?.first_name, p.therapist?.last_name].filter(Boolean).join(' ') || null],
       ['Physician', [p.primary_care_physician?.first_name, p.primary_care_physician?.last_name].filter(Boolean).join(' ') || null],
     ];
-    grid.innerHTML = '<div class="data-grid">' +
+    grid.innerHTML += '<div class="data-grid">' +
       fields.map(([label, v]) => \`
         <div class="data-field">
           <div class="label">\${label}</div>
           <div class="value \${!v ? 'null' : ''}">\${v || '—'}</div>
         </div>
       \`).join('') + '</div>';
+    if (p.others?.length) {
+      grid.innerHTML += '<div class="warnings" style="background:#eff6ff;border-color:#bfdbfe"><div class="warnings-title" style="color:#1e40af">ℹ️ Other Info</div><ul>' +
+        p.others.map(w => \`<li style="color:#1e3a8a">\${w}</li>\`).join('') + '</ul></div>';
+    }
     if (p.extraction_warnings?.length) {
       grid.innerHTML += '<div class="warnings"><div class="warnings-title">⚠️ Extraction Warnings</div><ul>' +
         p.extraction_warnings.map(w => \`<li>\${w}</li>\`).join('') + '</ul></div>';
@@ -624,9 +713,11 @@ function showRun(n) {
   // Highlight active button
   document.querySelectorAll('.run-btn').forEach(b => b.classList.toggle('active', +b.dataset.run === n));
 
-  // Show data + confidence for this run
+  // Show data + confidence + logs + saved JSON for this run
   showExtractedData(run.result);
   if (run.comparison) showConfidence(run.comparison);
+  renderLogs(run.logs);
+  showMongoDocument(run.result, \`Run #\${run.runNumber} · \${new Date(run.timestamp).toLocaleString()}\`);
 
   // Simulate step completion from recorded data
   const src = run.result?.patient?.source || run.result?.shipments?.[0]?.source || '';
@@ -667,6 +758,8 @@ async function pollForNewRun() {
       renderRunSelector(data);
       showExtractedData(latest.result);
       if (latest.comparison) showConfidence(latest.comparison);
+      renderLogs(latest.logs);
+      showMongoDocument(latest.result, \`Run #\${latest.runNumber} · \${new Date(latest.timestamp).toLocaleString()}\`);
       document.querySelectorAll('.run-btn').forEach((b, i, arr) => {
         b.classList.toggle('active', i === arr.length - 1);
       });
