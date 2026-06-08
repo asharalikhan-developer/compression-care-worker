@@ -18,6 +18,27 @@ async function preprocessImage(pngBuffer) {
     .toBuffer();
 }
 
+/**
+ * Heavier preprocessing used on the retry pass, tuned for NOISY, OVER-INKED
+ * faxes (dark bold text, halftone dithering, ghosting). The problem here is the
+ * opposite of faint text: strokes are already too heavy and smear into blobs,
+ * which hides the glyph shapes Tesseract OSD relies on. So we do NOT darken
+ * (no gamma) and do NOT merge strokes (no blur). Instead we strip the dither
+ * speckle, then binarize at a LOW threshold so only the true-black ink survives
+ * and the gray smear/ghosting drops out — thinning the letters back to readable
+ * shapes.
+ */
+async function preprocessImageStrong(pngBuffer) {
+  return sharp(pngBuffer)
+    .grayscale() // collapse to a single channel
+    .median(5) // strip halftone/dither speckle (the dominant fax noise)
+    .normalize() // stretch contrast across the full range
+    .threshold(140) // LOW threshold: keep only solid ink, drop gray smear/ghosting
+    .withMetadata({ density: 300 }) // embed 300 dpi in the PNG header
+    .png()
+    .toBuffer();
+}
+
 async function fixPdfOrientation(inputPath, outputPath) {
   console.log(`🚀 Starting process for: ${inputPath}`);
 
@@ -28,6 +49,11 @@ async function fixPdfOrientation(inputPath, outputPath) {
 
     // 1. Convert PDF → images at high scale (4× gives ~300 dpi for most docs)
     const imageStream = await pdf(inputPath, { scale: 2.0 });
+
+    // Scale used to re-render a page when the first orientation detection
+    // comes back with low confidence. Lazily created on first retry.
+    const RETRY_SCALE = 2.0;
+    let highResDoc = null;
 
     // 2. Load Tesseract with Legacy engine (OEM 0) — required for detect()
     const worker = await Tesseract.createWorker("osd", 0);
@@ -45,8 +71,33 @@ async function fixPdfOrientation(inputPath, outputPath) {
         // Perform orientation detection on the processed buffer
         const { data } = await worker.detect(processedBuffer);
 
-        const detectedAngle = data.orientation_degrees;
-        const confidence = data.orientation_confidence;
+        let detectedAngle = data.orientation_degrees;
+        let confidence = data.orientation_confidence;
+
+        // If confidence is below 1, re-render just this page at a higher scale
+        // and run preprocessing + detection again, then use the retry's result.
+        if (confidence < 1 || detectedAngle !== 0) {
+          console.log(
+            `    ➔ ⚠️ Low confidence (${confidence.toFixed(1)}), retrying page at scale ${RETRY_SCALE}...`,
+          );
+          try {
+            if (!highResDoc) {
+              highResDoc = await pdf(inputPath, { scale: RETRY_SCALE });
+            }
+            // getPage is 1-indexed
+            const retryRawBuffer = await highResDoc.getPage(pageIndex + 1);
+            const retryProcessedBuffer = await preprocessImageStrong(retryRawBuffer);
+            const { data: retryData } = await worker.detect(retryProcessedBuffer);
+
+            detectedAngle = retryData.orientation_degrees;
+            confidence = retryData.orientation_confidence;
+            console.log(
+              `    ➔ Retry result: ${detectedAngle}° (Confidence: ${confidence.toFixed(1)})`,
+            );
+          } catch (retryErr) {
+            console.error(`    ➔ Retry error:`, retryErr.message);
+          }
+        }
 
         if (detectedAngle !== 0) {
           console.log(
