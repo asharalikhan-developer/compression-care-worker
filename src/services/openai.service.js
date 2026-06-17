@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import config from "../config/index.js";
+import { logCost } from "../utils/openai-cost.js";
 
 class OpenAIService {
   constructor() {
@@ -299,8 +300,10 @@ class OpenAIService {
         response_format: { type: 'json_object' },
       });
 
+      logCost('Gmail Chat Completion', config.openai.model, response.usage);
+
       const result = response.choices[0]?.message?.content;
-      
+
       if (!result) {
         throw new Error('No response from OpenAI');
       }
@@ -351,8 +354,10 @@ class OpenAIService {
         ],
       });
 
+      logCost('Gmail Response API', config.openai.gpt5model, response.usage);
+
       const result = response.output_text;
-      
+
       if (!result) {
         throw new Error('No response from OpenAI Response API');
       }

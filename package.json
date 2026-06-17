@@ -37,6 +37,7 @@
     "pdfjs-dist": "^5.4.624",
     "sharp": "^0.34.5",
     "tesseract.js": "^7.0.0",
+    "unzipper": "^0.12.3",
     "xlsx": "^0.18.5"
   },
   "engines": {

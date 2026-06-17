@@ -38,6 +38,15 @@ export const config = {
     maxEmailsPerCheck: parseInt(process.env.MAX_EMAILS_PER_CHECK) || 10,
     concurrency: parseInt(process.env.WORKER_CONCURRENCY) || 5,
   },
+  mongo: {
+    uri: process.env.MONGODB_URI,
+    db: process.env.MONGODB_DB,
+    collection: process.env.MONGODB_COLLECTION ,
+  },
+  processors: (process.env.PROCESSORS || 'gmail,client')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
 };
 
 export default config;
