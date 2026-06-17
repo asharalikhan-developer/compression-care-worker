@@ -184,6 +184,132 @@ Environment variables in `.env`:
 | `OPENAI_API_KEY` | Your OpenAI API key | Required |
 | `CHECK_INTERVAL_MS` | Interval between email checks (ms) | 60000 |
 | `MAX_EMAILS_PER_CHECK` | Maximum emails to process per check | 10 |
+| `MAX_WORKER_ATTEMPTS` | Max retry attempts per job before final failure | 3 |
+| `PROCESSORS` | Comma-separated list of enabled processors (`gmail`, `client`) | `gmail,client` |
+
+## Document Orientation Model
+
+Scanned/fax PDFs are run through `src/scripts/fixPdfOrientation.js` to detect and correct page orientation (0°, 90°, 180°, 270°) before the PDF is uploaded to Cloudinary and sent to OpenAI. Correctly-oriented pages improve OCR accuracy significantly.
+
+The detector is **PaddlePaddle PP-LCNet_x1_0_doc_ori** running locally via ONNX Runtime (no external API call). The 6.5 MB ONNX model lives at:
+
+```
+models/PP-LCNet_x1_0_doc_ori.onnx
+```
+
+It is committed to git, so a fresh `git clone` already includes it. The path is overridable via `PPLCNET_MODEL_PATH` env var.
+
+### Model source
+
+- HuggingFace repo: <https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx>
+- Direct download URL: <https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx/resolve/main/inference.onnx>
+- Preprocessing spec (reference only — values are hardcoded in `fixPdfOrientation.js`): <https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx/resolve/main/inference.yml>
+
+### Re-downloading the model
+
+If the local file ever goes missing or you want to verify a clean copy:
+
+```bash
+mkdir -p models
+curl -sL -o models/PP-LCNet_x1_0_doc_ori.onnx \
+  https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx/resolve/main/inference.onnx
+```
+
+### Tuning
+
+Two knobs at the top of `src/scripts/fixPdfOrientation.js`:
+
+| Constant | Default | Purpose |
+|---|---|---|
+| `RENDER_SCALE` | `2.0` | pdf-to-img render scale (~144 DPI). Higher values are wasted since the model resizes to 256 short edge internally. |
+| `MIN_MARGIN_FOR_ROTATION` | `0.15` | Below this margin (top-1 prob − runner-up prob), the page is left as-is. Confident pages get margin ~0.25; blank/sparse pages get margin ~0.00. |
+
+The preprocessing constants (`RESIZE_SHORT`, `CROP_SIZE`, `MEAN`, `STD`, `LABELS`) come from the model's `inference.yml` and **must not be changed** — they are fixed by the model's training.
+
+### Convention note
+
+PP-LCNet returns the **current rotation** of the page (CW from upright), not the rotation to apply to fix it. The engine converts to the "rotation-to-apply" convention internally:
+
+```
+fixAngle = (360 - detectedAngle) % 360
+```
+
+So a model output of `270°` results in a `90°` CW rotation being applied. The 180° case is symmetric (both directions land at the same result), which can mask the bug if you only test on upside-down pages.
+
+## Error Handling & Retries (Client Processor)
+
+The `client` processor uses stage-tagged errors, exponential-backoff retries, and a uniform Mongo "acknowledgement" payload so the producer can poll a single document and learn exactly what happened.
+
+### Retry behavior
+
+- Each job runs up to `MAX_WORKER_ATTEMPTS` times (default `3`). Configure via env var.
+- Backoff is exponential: `5s → 10s → 20s → 40s …` capped at **60s**.
+- Retries are managed by the worker itself (it re-enqueues onto the same BullMQ queue with `delay`) — the producer does **not** need to set BullMQ `attempts`.
+- Each attempt stamps `_workerAttempt` on `job.data` so the next attempt knows which try it's on.
+- On every failed attempt, any Cloudinary assets uploaded during that attempt are **deleted** — no orphan files build up.
+- **Permanent** errors (bad input, doc not found, unsupported format) short-circuit retries and go straight to the failure acknowledgement.
+
+### Acknowledgement payload (MongoDB `documents` collection, keyed by `uniqueId`)
+
+**On success:**
+
+```json
+{
+  "status": "processed",
+  "processedAt": "2026-06-17T10:00:00.000Z",
+  "attemptsMade": 1,
+  "error": null,
+  "result": { "type": "patient", "patient": { /* extracted fields */ } }
+}
+```
+
+**On final failure** (after retries exhausted or a permanent error):
+
+```json
+{
+  "status": "failed",
+  "failedAt": "2026-06-17T10:00:30.000Z",
+  "attemptsMade": 3,
+  "error": {
+    "message": "Failed to download ... (504 Gateway Timeout)",
+    "stage": "download",
+    "code": "DOWNLOAD_FAILED"
+  }
+}
+```
+
+### Error stages
+
+| `stage`       | When it fires |
+|---------------|---------------|
+| `detect`      | Job input validation / format sniffing (PDF vs ZIP vs unknown) |
+| `download`    | Fetching `pdfUrls[0]` from the source (signed URL) |
+| `unzip`       | Extracting PDFs from a ZIP archive |
+| `preprocess`  | Text-check + orientation fix on a PDF |
+| `cloudinary`  | Uploading a (possibly orientation-fixed) PDF to Cloudinary |
+| `openai`      | Calling GPT-5.5 via the Response API |
+| `mongo`       | Updating the `documents` collection with the result |
+
+### Error codes
+
+| `code`                       | `permanent` | Meaning |
+|------------------------------|:-----------:|---------|
+| `BAD_INPUT`                  | yes         | `uniqueId` or `pdfUrls` missing on the job |
+| `UNSUPPORTED_FORMAT`         | yes         | Source URL returned neither a PDF nor a ZIP |
+| `EMPTY_ZIP`                  | yes         | ZIP contained no `.pdf` entries |
+| `NO_PATIENT_RETURNED`        | yes         | OpenAI returned a payload without a `patient` object |
+| `DOC_NOT_FOUND`              | yes         | No `documents.{uniqueId}` row to update |
+| `DOWNLOAD_FAILED`            | no          | Transient HTTP error fetching the source URL |
+| `UNZIP_FAILED`               | no          | ZIP extraction threw |
+| `PREPROCESS_FAILED`          | no          | Unexpected failure in text-check / orientation fix |
+| `CLOUDINARY_UPLOAD_FAILED`   | no          | Transient Cloudinary error |
+| `OPENAI_ERROR`               | no          | Transient OpenAI error (429, 5xx, network) |
+| `MONGO_UPDATE_FAILED`        | no          | Transient MongoDB error during the final write |
+| `UNHANDLED_ERROR`            | no          | Caught-but-unclassified — treat as a bug, investigate |
+| `PIPELINE_ERROR`             | varies      | Generic fallback if a `PipelineError` is thrown without a more specific code |
+
+`permanent: yes` → no retry; failure is acknowledged immediately.
+`permanent: no` → retried up to `MAX_WORKER_ATTEMPTS` with exponential backoff before final failure.
 
 ## Project Structure
 

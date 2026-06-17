@@ -1,4 +1,4 @@
-import { Worker } from 'bullmq';
+import { Worker, Queue } from 'bullmq';
 import Redis from 'ioredis';
 import mongoose from 'mongoose';
 import config from '../config/index.js';
@@ -9,6 +9,7 @@ class WorkerService {
     this.processors = null;
     this.deps = null;
     this.worker = null;
+    this.queue = null;
     this.redis = null;
     this.mongooseConnected = false;
     this.collection = null;
@@ -42,10 +43,13 @@ class WorkerService {
     });
     console.log(`✅ Redis config loaded: ${config.redis.host}:${config.redis.port}`);
 
+    this.queue = new Queue(config.redis.queueName, { connection: this.redis });
+
     this.deps = {
       redis: this.redis,
       collection: this.collection,
       mongoose,
+      queue: this.queue,
     };
 
     for (const processor of this.processors.values()) {
@@ -140,6 +144,15 @@ class WorkerService {
   async shutdown() {
     console.log('\n🛑 Shutting down Worker Service...');
     await this.stopWorker();
+
+    if (this.queue) {
+      try {
+        await this.queue.close();
+        console.log('✅ Queue closed');
+      } catch (err) {
+        console.warn('⚠️ Queue close error:', err?.message || err);
+      }
+    }
 
     if (this.redis) {
       await this.redis.quit();

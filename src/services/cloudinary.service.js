@@ -32,10 +32,10 @@ class CloudinaryService {
    * @param {string} filename - Original filename for reference
    * @returns {Promise<string>} - The secure URL of the uploaded PDF
    */
-  async uploadPdf(pdfBuffer, filename = 'document.pdf') {
+  async uploadPdfWithMeta(pdfBuffer, filename = 'document.pdf') {
     try {
       const base64Data = `data:application/pdf;base64,${pdfBuffer.toString('base64')}`;
-      
+
       const uploadOptions = {
         resource_type: 'raw',
         folder: 'fax-documents',
@@ -44,13 +44,18 @@ class CloudinaryService {
       };
 
       const result = await this.client.uploader.upload(base64Data, uploadOptions);
-      
+
       console.log(`✅ PDF uploaded to Cloudinary: ${result.secure_url}`);
-      return result.secure_url;
+      return { url: result.secure_url, publicId: result.public_id };
     } catch (error) {
       console.error('Cloudinary upload error:', error.message);
       throw new Error(`Failed to upload PDF to Cloudinary: ${error.message}`);
     }
+  }
+
+  async uploadPdf(pdfBuffer, filename = 'document.pdf') {
+    const { url } = await this.uploadPdfWithMeta(pdfBuffer, filename);
+    return url;
   }
 
   /**

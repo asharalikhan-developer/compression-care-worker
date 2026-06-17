@@ -5,6 +5,40 @@ import contentExtractorService from '../services/content-extractor.service.js';
 import cloudinaryService from '../services/cloudinary.service.js';
 import fixPdfOrientationBuffer from '../scripts/fixPdfOrientationBuffer.js';
 
+const STAGES = {
+  DOWNLOAD: 'download',
+  DETECT: 'detect',
+  UNZIP: 'unzip',
+  PREPROCESS: 'preprocess',
+  CLOUDINARY: 'cloudinary',
+  OPENAI: 'openai',
+  MONGO: 'mongo',
+};
+
+const MAX_ATTEMPTS = parseInt(process.env.MAX_WORKER_ATTEMPTS) || 3;
+const BACKOFF_BASE_MS = 5000;
+const BACKOFF_MAX_MS = 60_000;
+
+class PipelineError extends Error {
+  constructor(message, { stage, code, permanent = false, cause } = {}) {
+    super(message);
+    this.name = 'PipelineError';
+    this.stage = stage || 'unknown';
+    this.code = code || 'PIPELINE_ERROR';
+    this.permanent = permanent;
+    this.cause = cause;
+  }
+}
+
+async function withStage(stage, code, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof PipelineError) throw err;
+    throw new PipelineError(err.message, { stage, code, cause: err });
+  }
+}
+
 async function init() {
   openaiClientService.initialize();
   cloudinaryService.initialize();
@@ -53,102 +87,149 @@ async function extractPdfsFromZip(zipBuffer) {
   return pdfs;
 }
 
-async function preprocessAndUpload(buffer, filename) {
+async function preprocessPdf(buffer, filename) {
   const text = await contentExtractorService.extractFromPdf(buffer);
-
-  let uploadBuffer = buffer;
   if (!text || text.trim().length === 0) {
     console.log(`    📸 Scanned PDF (${filename}) — fixing orientation`);
     try {
-      uploadBuffer = await fixPdfOrientationBuffer(buffer, filename);
+      return await fixPdfOrientationBuffer(buffer, filename);
     } catch (err) {
       console.error(`    ⚠️ Orientation fix failed for ${filename}, uploading original:`, err.message);
-      uploadBuffer = buffer;
+      return buffer;
     }
-  } else {
-    console.log(`    ✅ Digital PDF (${filename}) — ${text.length} chars, uploading as-is`);
   }
-
-  return cloudinaryService.uploadPdf(uploadBuffer, filename);
+  console.log(`    ✅ Digital PDF (${filename}) — ${text.length} chars, uploading as-is`);
+  return buffer;
 }
 
-async function resolvePdfs(sourceUrl) {
-  const baseName = filenameFromUrl(sourceUrl, 'document.pdf');
-  console.log('  ⬇️  Downloading source...');
-  const t0 = Date.now();
-  const buf = await downloadBuffer(sourceUrl);
-  console.log(`  ⏱️ Download: ${Date.now() - t0}ms (${buf.length} bytes)`);
-
-  if (isZipBuffer(buf)) {
-    console.log('  🗜️  ZIP detected — extracting PDFs...');
-    const pdfs = await extractPdfsFromZip(buf);
-    if (pdfs.length === 0) throw new Error('ZIP contained no PDF files');
-    console.log(`  📦 Found ${pdfs.length} PDF(s) in ZIP: ${pdfs.map((p) => p.filename).join(', ')}`);
-    return pdfs;
+async function cleanupAssets(uploadedAssets) {
+  if (!uploadedAssets.length) return;
+  console.log(`  🧹 Cleaning up ${uploadedAssets.length} Cloudinary asset(s)...`);
+  for (const asset of uploadedAssets) {
+    try {
+      await cloudinaryService.deleteFile(asset.publicId);
+    } catch (err) {
+      console.warn(`    ⚠️ Cleanup failed for ${asset.publicId}:`, err?.message || err);
+    }
   }
+}
 
-  if (isPdfBuffer(buf)) {
-    return [{ filename: baseName, buffer: buf }];
+function classifyError(err) {
+  if (err instanceof PipelineError) {
+    return { stage: err.stage, code: err.code, message: err.message, permanent: err.permanent };
   }
-
-  throw new Error('Source URL did not return a PDF or ZIP file');
+  return { stage: 'unknown', code: 'UNHANDLED_ERROR', message: err?.message || String(err), permanent: false };
 }
 
 async function handle(job, deps) {
+  const attemptNumber = job.data._workerAttempt || 1;
   const { uniqueId, pdfUrls } = job.data || {};
 
-  if (!uniqueId) throw new Error('Client job missing uniqueId');
+  if (!uniqueId) {
+    throw new PipelineError('Client job missing uniqueId', {
+      stage: STAGES.DETECT, code: 'BAD_INPUT', permanent: true,
+    });
+  }
   if (!Array.isArray(pdfUrls) || pdfUrls.length === 0) {
-    throw new Error('Client job missing pdfUrls');
+    throw new PipelineError('Client job missing pdfUrls', {
+      stage: STAGES.DETECT, code: 'BAD_INPUT', permanent: true,
+    });
   }
 
   const sourceUrl = pdfUrls[0];
-  console.log(`\n📄 Client document — uniqueId: ${uniqueId}`);
+  console.log(`\n📄 Client document — uniqueId: ${uniqueId} (attempt ${attemptNumber}/${MAX_ATTEMPTS})`);
   console.log(`   🔗 source: ${sourceUrl}`);
 
-  const pdfs = await resolvePdfs(sourceUrl);
+  const uploadedAssets = [];
 
-  console.log(`  🔧 Preprocessing ${pdfs.length} PDF(s) sequentially...`);
-  const tPrep = Date.now();
-  const cloudinaryUrls = [];
-  for (const pdf of pdfs) {
-    const url = await preprocessAndUpload(pdf.buffer, pdf.filename);
-    cloudinaryUrls.push(url);
+  try {
+    console.log('  ⬇️  Downloading source...');
+    const t0 = Date.now();
+    const buf = await withStage(STAGES.DOWNLOAD, 'DOWNLOAD_FAILED', () => downloadBuffer(sourceUrl));
+    console.log(`  ⏱️ Download: ${Date.now() - t0}ms (${buf.length} bytes)`);
+
+    let pdfs;
+    if (isZipBuffer(buf)) {
+      console.log('  🗜️  ZIP detected — extracting PDFs...');
+      pdfs = await withStage(STAGES.UNZIP, 'UNZIP_FAILED', () => extractPdfsFromZip(buf));
+      if (pdfs.length === 0) {
+        throw new PipelineError('ZIP contained no PDF files', {
+          stage: STAGES.UNZIP, code: 'EMPTY_ZIP', permanent: true,
+        });
+      }
+      console.log(`  📦 Found ${pdfs.length} PDF(s) in ZIP: ${pdfs.map((p) => p.filename).join(', ')}`);
+    } else if (isPdfBuffer(buf)) {
+      pdfs = [{ filename: filenameFromUrl(sourceUrl), buffer: buf }];
+    } else {
+      throw new PipelineError('Source URL did not return a PDF or ZIP file', {
+        stage: STAGES.DETECT, code: 'UNSUPPORTED_FORMAT', permanent: true,
+      });
+    }
+
+    console.log(`  🔧 Preprocessing ${pdfs.length} PDF(s) sequentially...`);
+    const tPrep = Date.now();
+    for (const pdf of pdfs) {
+      const uploadBuffer = await withStage(
+        STAGES.PREPROCESS, 'PREPROCESS_FAILED',
+        () => preprocessPdf(pdf.buffer, pdf.filename),
+      );
+      const { url, publicId } = await withStage(
+        STAGES.CLOUDINARY, 'CLOUDINARY_UPLOAD_FAILED',
+        () => cloudinaryService.uploadPdfWithMeta(uploadBuffer, pdf.filename),
+      );
+      uploadedAssets.push({ url, publicId });
+    }
+    console.log(`  ⏱️ Preprocess + upload: ${Date.now() - tPrep}ms`);
+    uploadedAssets.forEach((a) => console.log(`   ☁️  ${a.url}`));
+
+    const cloudinaryUrls = uploadedAssets.map((a) => a.url);
+    console.log(`  🤖 Analyzing ${cloudinaryUrls.length} PDF(s) with OpenAI (gpt-5 Response API)...`);
+    const tAI = Date.now();
+    const patientResult = await withStage(
+      STAGES.OPENAI, 'OPENAI_ERROR',
+      () => openaiClientService.extractPatientFromPdfUrls(cloudinaryUrls),
+    );
+    console.log(`  ⏱️ Extraction: ${Date.now() - tAI}ms`);
+
+    if (!patientResult?.patient) {
+      throw new PipelineError('OpenAI returned no patient object', {
+        stage: STAGES.OPENAI, code: 'NO_PATIENT_RETURNED', permanent: true,
+      });
+    }
+
+    patientResult.patient.file_url = cloudinaryUrls;
+    if (typeof patientResult.patient.confidence_score === 'number') {
+      console.log(`  🧠 AI self-rated confidence: ${patientResult.patient.confidence_score}/100`);
+    }
+
+    const updateRes = await withStage(
+      STAGES.MONGO, 'MONGO_UPDATE_FAILED',
+      () => deps.collection.updateOne(
+        { uniqueId },
+        {
+          $set: {
+            result: patientResult,
+            status: 'processed',
+            processedAt: new Date().toISOString(),
+            attemptsMade: attemptNumber,
+            error: null,
+          },
+        },
+      ),
+    );
+
+    if (updateRes.matchedCount === 0) {
+      throw new PipelineError(`No document found for uniqueId=${uniqueId}`, {
+        stage: STAGES.MONGO, code: 'DOC_NOT_FOUND', permanent: true,
+      });
+    }
+
+    console.log(`  💾 Updated documents.{uniqueId: ${uniqueId}} → status: processed`);
+    return { uniqueId, status: 'processed', attemptsMade: attemptNumber };
+  } catch (err) {
+    await cleanupAssets(uploadedAssets);
+    throw err;
   }
-  console.log(`  ⏱️ Preprocess + upload: ${Date.now() - tPrep}ms`);
-  cloudinaryUrls.forEach((u) => console.log(`   ☁️  ${u}`));
-
-  console.log(`  🤖 Analyzing ${cloudinaryUrls.length} PDF(s) with OpenAI (gpt-5 Response API)...`);
-  const tAI = Date.now();
-  const patientResult = await openaiClientService.extractPatientFromPdfUrls(cloudinaryUrls);
-  console.log(`  ⏱️ Extraction: ${Date.now() - tAI}ms`);
-
-  if (!patientResult?.patient) {
-    throw new Error('OpenAI returned no patient object');
-  }
-
-  patientResult.patient.file_url = cloudinaryUrls;
-  if (typeof patientResult.patient.confidence_score === 'number') {
-    console.log(`  🧠 AI self-rated confidence: ${patientResult.patient.confidence_score}/100`);
-  }
-
-  const updateRes = await deps.collection.updateOne(
-    { uniqueId },
-    {
-      $set: {
-        result: patientResult,
-        status: 'processed',
-        processedAt: new Date().toISOString(),
-      },
-    },
-  );
-
-  if (updateRes.matchedCount === 0) {
-    throw new Error(`No document found for uniqueId=${uniqueId}`);
-  }
-
-  console.log(`  💾 Updated documents.{uniqueId: ${uniqueId}} → status: processed`);
-  return { uniqueId, status: 'processed' };
 }
 
 async function onCompleted(job) {
@@ -160,12 +241,62 @@ async function onCompleted(job) {
   }
 }
 
-async function onFailed(job, _err) {
+async function onFailed(job, err, deps) {
+  const attemptNumber = job?.data?._workerAttempt || 1;
+  const info = classifyError(err);
+  const canRetry = !info.permanent && attemptNumber < MAX_ATTEMPTS;
+
+  console.error(
+    `   ↳ stage=${info.stage} code=${info.code} permanent=${info.permanent} attempt=${attemptNumber}/${MAX_ATTEMPTS}`,
+  );
+
+  if (canRetry && deps?.queue) {
+    const backoffMs = Math.min(BACKOFF_BASE_MS * 2 ** (attemptNumber - 1), BACKOFF_MAX_MS);
+    try {
+      await deps.queue.add(
+        job.name,
+        { ...job.data, _workerAttempt: attemptNumber + 1 },
+        { delay: backoffMs },
+      );
+      console.log(`🔁 Re-enqueued uniqueId=${job.data?.uniqueId} (attempt ${attemptNumber + 1}/${MAX_ATTEMPTS}) in ${backoffMs}ms`);
+    } catch (reEnqErr) {
+      console.error('❌ Re-enqueue failed:', reEnqErr?.message || reEnqErr);
+    }
+    try {
+      await job?.remove();
+    } catch {}
+    return;
+  }
+
+  const uniqueId = job?.data?.uniqueId;
+  if (uniqueId && deps?.collection) {
+    try {
+      await deps.collection.updateOne(
+        { uniqueId },
+        {
+          $set: {
+            status: 'failed',
+            failedAt: new Date().toISOString(),
+            attemptsMade: attemptNumber,
+            error: {
+              message: info.message,
+              stage: info.stage,
+              code: info.code,
+            },
+          },
+        },
+      );
+      console.log(`💾 Acknowledged failure: documents.{uniqueId: ${uniqueId}} → status: failed`);
+    } catch (mongoErr) {
+      console.error('❌ Failure acknowledgement write failed:', mongoErr?.message || mongoErr);
+    }
+  }
+
   try {
     await job?.remove();
     console.log(`🗑️  Removed failed Job ${job?.id} from Redis`);
-  } catch (err) {
-    console.warn(`⚠️ Cleanup error for failed Job ${job?.id}:`, err?.message || err);
+  } catch (cleanupErr) {
+    console.warn(`⚠️ Cleanup error for failed Job ${job?.id}:`, cleanupErr?.message || cleanupErr);
   }
 }
 
