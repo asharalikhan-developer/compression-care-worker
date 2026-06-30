@@ -2,6 +2,12 @@
 // Source: https://openai.com/api/pricing
 const PRICING = {
   'gpt-5.5': { input: 5,  output: 30.00 },
+  'gpt-5-2025-08-07': { input: 1.25,  output: 10.00 },
+  'gpt-5.4-2026-03-05':{input: 2.5, output: 15.00},
+  'gpt-5.2-2025-12-11': { input: 1.75, output: 14.00 },
+  'gpt-5.1-2025-11-13': { input: 1.25, output: 10.00 },
+  'gpt-4o-mini': { input: 0.15, output: 0.60 },
+  'gpt-4.1-mini': { input: 0.40, output: 1.60 },
 };
 
 function pickTokens(usage = {}) {

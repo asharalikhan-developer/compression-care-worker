@@ -1,6 +1,18 @@
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { pdf as renderPdf } from 'pdf-to-img';
+import { PDFDocument } from 'pdf-lib';
 import config from '../config/index.js';
 import { logCost } from '../utils/openai-cost.js';
+
+// ── Table-page detection (tune on real documents) ─────────────────────────────
+// A digital page that draws this many vector path/line ops is almost certainly a
+// table/form grid; a page carrying interactive form fields (checkboxes) is too.
+// Such pages are flattened to a raster image so gpt-5.5 sees exactly what a human
+// sees (filled vs empty boxes) rather than relying on the vector/AcroForm layer.
+const TABLE_PATH_OPS_THRESHOLD = 60;
+// Scale at which table pages are rasterized (higher = sharper, larger payload).
+const RENDER_SCALE = 3;
 
 class OpenAIClientService {
   constructor() {
@@ -30,9 +42,17 @@ class OpenAIClientService {
     const systemPrompt = this.buildSystemPrompt();
     const userPrompt = this.buildUserPrompt(pdfUrls.length);
 
+    // For each PDF: if it has table/checkbox pages, rebuild it with those pages
+    // flattened to images and send the rebuilt bytes (uploaded → file_id).
+    // Otherwise send the original Cloudinary URL untouched (file_url).
+    const fileBlocks = [];
+    for (const url of pdfUrls) {
+      fileBlocks.push(await this.#buildFileBlock(url));
+    }
+
     const content = [
       { type: 'input_text', text: `${systemPrompt}\n\n${userPrompt}` },
-      ...pdfUrls.map((url) => ({ type: 'input_file', file_url: url })),
+      ...fileBlocks,
     ];
 
     try {
@@ -55,6 +75,110 @@ class OpenAIClientService {
       console.error('OpenAI client extraction error:', error.message);
       throw new Error(`Failed to extract patient from PDF URLs: ${error.message}`);
     }
+  }
+
+  /**
+   * Decide how a single PDF reaches gpt-5.5:
+   *  • no table pages → reuse the original Cloudinary URL ({ file_url })
+   *  • has table pages → flatten those pages to images, upload the rebuilt PDF,
+   *    and reference it by id ({ file_id })
+   * On any failure we degrade gracefully to the original URL so extraction still runs.
+   */
+  async #buildFileBlock(url) {
+    const filename = (() => {
+      try { return new URL(url).pathname.split('/').pop() || 'document.pdf'; }
+      catch { return 'document.pdf'; }
+    })();
+
+    try {
+      const buffer = Buffer.from(await (await fetch(url)).arrayBuffer());
+      const tablePages = await this.#detectTablePages(buffer);
+      if (tablePages.length === 0) {
+        return { type: 'input_file', file_url: url };
+      }
+
+      console.log(`  🗂️  ${filename}: flattening table page(s) ${tablePages.join(', ')} to image(s)`);
+      const flattened = await this.#flattenTablePages(buffer, tablePages);
+      const file = await this.client.files.create({
+        file: await toFile(flattened, filename, { type: 'application/pdf' }),
+        purpose: 'user_data',
+      });
+      return { type: 'input_file', file_id: file.id };
+    } catch (err) {
+      console.warn(`  ⚠️ Flatten failed for ${filename} (${err.message}); sending original URL`);
+      return { type: 'input_file', file_url: url };
+    }
+  }
+
+  /** Return the 1-based page numbers that look like tables/checkbox forms. */
+  async #detectTablePages(buffer) {
+    const doc = await pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      useSystemFonts: true,
+    }).promise;
+
+    const OPS = pdfjsLib.OPS;
+    const tablePages = [];
+
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+
+      let pathOps = 0;
+      try {
+        const opList = await page.getOperatorList();
+        for (const fn of opList.fnArray) {
+          if (
+            fn === OPS.constructPath ||
+            fn === OPS.stroke ||
+            fn === OPS.fill ||
+            fn === OPS.eoFill ||
+            fn === OPS.fillStroke
+          ) {
+            pathOps++;
+          }
+        }
+      } catch { /* best-effort */ }
+
+      let widgetCount = 0;
+      try {
+        const annots = await page.getAnnotations();
+        widgetCount = annots.filter((a) => a.subtype === 'Widget').length;
+      } catch { /* best-effort */ }
+
+      if (pathOps >= TABLE_PATH_OPS_THRESHOLD || widgetCount > 0) tablePages.push(n);
+    }
+
+    if (typeof doc.cleanup === 'function') await doc.cleanup();
+    return tablePages;
+  }
+
+  /**
+   * Rebuild the PDF: table pages become rasterized image pages (so checkbox
+   * state is baked into pixels), all other pages are copied through unchanged.
+   * @returns {Promise<Buffer>} the rebuilt PDF bytes
+   */
+  async #flattenTablePages(buffer, tablePages) {
+    const tableSet = new Set(tablePages);
+    const srcDoc = await PDFDocument.load(buffer);
+    const outDoc = await PDFDocument.create();
+    const rendered = await renderPdf(buffer, { scale: RENDER_SCALE });
+
+    for (let i = 0; i < srcDoc.getPageCount(); i++) {
+      const pageNum = i + 1;
+      if (tableSet.has(pageNum)) {
+        const { width, height } = srcDoc.getPage(i).getSize();
+        const png = await rendered.getPage(pageNum); // Buffer (PNG)
+        const img = await outDoc.embedPng(png);
+        const page = outDoc.addPage([width, height]);
+        page.drawImage(img, { x: 0, y: 0, width, height });
+      } else {
+        const [copied] = await outDoc.copyPages(srcDoc, [i]);
+        outDoc.addPage(copied);
+      }
+    }
+
+    const bytes = await outDoc.save();
+    return Buffer.from(bytes);
   }
 
   buildSystemPrompt() {

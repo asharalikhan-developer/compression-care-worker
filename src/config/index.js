@@ -13,8 +13,16 @@ export const config = {
     apiKey: process.env.OPENAI_API_KEY,
     model: 'gpt-4.1-mini',
     gpt5model: 'gpt-5.5',
+    // gpt5model: 'gpt-5-2025-08-07',
+    // gpt5model: 'gpt-5.1-2025-11-13',
+    // gpt5model: 'gpt-5.2-2025-12-11',
+    // gpt5model: 'gpt-5.4-2026-03-05',
     // model: 'gpt-4o-mini',
     temperature: 0.2,
+  },
+  mistral: {
+    apiKey: process.env.MISTRAL_API_KEY,
+    ocrModel: process.env.MISTRAL_OCR_MODEL || 'mistral-ocr-latest',
   },
   gmail: {
     credentialsPath: path.join(ROOT_DIR, 'credentialsv2.json'),
