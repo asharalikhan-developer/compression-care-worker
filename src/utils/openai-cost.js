@@ -1,3 +1,5 @@
+import { emitProcessingEvent } from './processing-logger.js';
+
 // Prices in $ per 1M tokens. Update as OpenAI pricing changes.
 // Source: https://openai.com/api/pricing
 const PRICING = {
@@ -48,6 +50,8 @@ export function logCost(label, model, usage) {
   } else {
     console.log(`  💵 ${label} [${model}] — ${tokenLine} — cost: $${info.cost.toFixed(5)}`);
   }
+  // Surface a structured cost event to the live demo dashboard (no-op outside a job).
+  emitProcessingEvent('cost', { label, ...info });
   return info;
 }
 

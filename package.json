@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "auth": "node src/scripts/authenticate.js"
+    "auth": "node src/scripts/authenticate.js",
+    "demo": "node src/demo.js"
   },
   "keywords": [
     "gmail",
@@ -26,7 +27,9 @@
     "bullmq": "^5.67.2",
     "canvas": "^3.2.1",
     "cloudinary": "^2.9.0",
+    "cors": "^2.8.6",
     "dotenv": "^16.3.1",
+    "express": "^5.2.1",
     "googleapis": "^129.0.0",
     "ioredis": "^5.9.2",
     "mammoth": "^1.6.0",

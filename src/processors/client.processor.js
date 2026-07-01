@@ -1,14 +1,13 @@
 import unzipper from 'unzipper';
 
-// ── Extraction engine — keep exactly ONE of these uncommented ────────────────
-// Both expose the same `extractPatientFromPdfUrls(urls)` method, so switching is
-// just a matter of toggling the comment below — no other code changes needed.
-import openaiClientService from '../services/openai-client.service.js'; // ACTIVE: gpt-5.5 file input; flattens table pages to images
-// import openaiClientService from '../services/openai-client.service2.js'; // ALT: Mistral OCR → GPT-4o-mini (uncomment this + comment the line above)
-// ─────────────────────────────────────────────────────────────────────────────
+// Extraction engine is resolved per job from the registry, so the live demo's
+// dropdown can switch engines at runtime. Both engines expose the same
+// `extractPatientFromPdfUrls(urls)` method. (Default: EXTRACTION_ENGINE env var.)
+import { getEngine, getEngineName, getEngineLabel } from '../services/extraction-engine.js';
 import contentExtractorService from '../services/content-extractor.service.js';
 import cloudinaryService from '../services/cloudinary.service.js';
 import fixPdfOrientationBuffer from '../scripts/fixPdfOrientationBuffer.js';
+import { emitProcessingEvent } from '../utils/processing-logger.js';
 
 const STAGES = {
   DOWNLOAD: 'download',
@@ -45,7 +44,9 @@ async function withStage(stage, code, fn) {
 }
 
 async function init() {
-  openaiClientService.initialize();
+  // Initialize the default engine eagerly (fail fast on missing keys); the other
+  // engine lazy-initializes on first use if the demo switches to it.
+  getEngine().initialize();
   cloudinaryService.initialize();
 }
 
@@ -188,16 +189,16 @@ async function handle(job, deps) {
     uploadedAssets.forEach((a) => console.log(`   ☁️  ${a.url}`));
 
     const cloudinaryUrls = uploadedAssets.map((a) => a.url);
-    console.log(`  🤖 Analyzing ${cloudinaryUrls.length} PDF(s) via gpt-5.5 (table pages flattened to images)...`);
-    // console.log(`  🤖 Analyzing ${cloudinaryUrls.length} PDF(s) via Mistral OCR → GPT-4o-mini...`); // service2 log
+    console.log(`  🤖 Analyzing ${cloudinaryUrls.length} PDF(s) via [${getEngineName()}] ${getEngineLabel()}...`);
     const tAI = Date.now();
-    // Same call for both engines — toggle which one runs by switching the import at
-    // the top of the file (service.js ⇄ service2.js). No change needed on this line.
     const patientResult = await withStage(
       STAGES.OPENAI, 'OPENAI_ERROR',
-      () => openaiClientService.extractPatientFromPdfUrls(cloudinaryUrls),
+      () => getEngine().extractPatientFromPdfUrls(cloudinaryUrls),
     );
     console.log(`  ⏱️ Extraction: ${Date.now() - tAI}ms`);
+
+    // Surface the raw API response to the live demo dashboard.
+    emitProcessingEvent('result', { engine: getEngineName(), response: patientResult });
 
     if (!patientResult?.patient) {
       throw new PipelineError('OpenAI returned no patient object', {

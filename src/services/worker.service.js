@@ -3,6 +3,7 @@ import Redis from 'ioredis';
 import mongoose from 'mongoose';
 import config from '../config/index.js';
 import { getEnabledProcessors } from '../processors/index.js';
+import { runWithLogContext, emitProcessingEvent } from '../utils/processing-logger.js';
 
 class WorkerService {
   constructor() {
@@ -85,15 +86,32 @@ class WorkerService {
       queueName,
       async (job) => {
         const source = job.data?.source || 'unknown';
-        console.log(`\n📬 Job ${job.id} received - name: "${job.name}" source: "${source}"`);
+        // documentId ties all of this job's logs/events together for the live demo.
+        const documentId = job.data?.uniqueId || String(job.id);
 
-        const processor = this.resolveProcessor(job);
-        const result = await processor.handle(job, this.deps);
+        return runWithLogContext(documentId, async () => {
+          emitProcessingEvent('job:start', {
+            jobId: String(job.id),
+            source,
+            name: job.name,
+            sourceUrl: job.data?.pdfUrls?.[0] || null,
+          });
+          console.log(`\n📬 Job ${job.id} received - name: "${job.name}" source: "${source}"`);
 
-        console.log(`\n═══════════════════════════════════════════════════════════════`);
-        console.log(`                    JOB COMPLETED: ${job.id} (${processor.source})`);
-        console.log(`═══════════════════════════════════════════════════════════════\n`);
-        return result;
+          try {
+            const processor = this.resolveProcessor(job);
+            const result = await processor.handle(job, this.deps);
+
+            console.log(`\n═══════════════════════════════════════════════════════════════`);
+            console.log(`                    JOB COMPLETED: ${job.id} (${processor.source})`);
+            console.log(`═══════════════════════════════════════════════════════════════\n`);
+            emitProcessingEvent('job:done', { jobId: String(job.id) });
+            return result;
+          } catch (err) {
+            emitProcessingEvent('job:error', { jobId: String(job.id), message: err?.message || String(err) });
+            throw err;
+          }
+        });
       },
       {
         connection: this.redis,

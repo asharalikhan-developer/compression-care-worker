@@ -4,6 +4,7 @@ import { pdf as renderPdf } from 'pdf-to-img';
 import { PDFDocument } from 'pdf-lib';
 import config from '../config/index.js';
 import { logCost } from '../utils/openai-cost.js';
+import { getFileInputModel } from './runtime-settings.js';
 
 // ── Table-page detection (tune on real documents) ─────────────────────────────
 // A digital page that draws this many vector path/line ops is almost certainly a
@@ -55,15 +56,16 @@ class OpenAIClientService {
       ...fileBlocks,
     ];
 
+    const model = getFileInputModel() || config.openai.gpt5model;
     try {
       const response = await this.client.responses.create({
-        model: config.openai.gpt5model,
+        model,
         input: [{ role: 'user', content }],
       });
 
       logCost(
         `Client PDF extraction (${pdfUrls.length} file${pdfUrls.length === 1 ? '' : 's'})`,
-        config.openai.gpt5model,
+        model,
         response.usage,
       );
 
@@ -115,6 +117,7 @@ class OpenAIClientService {
     const doc = await pdfjsLib.getDocument({
       data: new Uint8Array(buffer),
       useSystemFonts: true,
+      verbosity: pdfjsLib.VerbosityLevel.ERRORS, // silence benign pdfjs warnings
     }).promise;
 
     const OPS = pdfjsLib.OPS;
@@ -161,7 +164,10 @@ class OpenAIClientService {
     const tableSet = new Set(tablePages);
     const srcDoc = await PDFDocument.load(buffer);
     const outDoc = await PDFDocument.create();
-    const rendered = await renderPdf(buffer, { scale: RENDER_SCALE });
+    const rendered = await renderPdf(buffer, {
+      scale: RENDER_SCALE,
+      docInitParams: { verbosity: pdfjsLib.VerbosityLevel.ERRORS }, // silence benign pdfjs warnings
+    });
 
     for (let i = 0; i < srcDoc.getPageCount(); i++) {
       const pageNum = i + 1;
