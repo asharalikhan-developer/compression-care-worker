@@ -101,6 +101,8 @@ function dashboardHTML() {
   .field { display:flex; flex-direction:column; gap:4px; }
   .field label { font-size:11px; color:#94a3b8; text-transform:uppercase; letter-spacing:.04em; }
   select { background:#0f172a; color:#e2e8f0; border:1px solid #475569; border-radius:8px; padding:8px 10px; font-size:13px; max-width:340px; }
+  .btn { background:#0f172a; color:#e2e8f0; border:1px solid #475569; border-radius:8px; padding:8px 12px; font-size:13px; cursor:pointer; }
+  .btn:hover { background:#243349; border-color:#64748b; }
   .status-dot { width:8px; height:8px; border-radius:50%; background:#64748b; display:inline-block; }
   .status-dot.live { background:#22c55e; box-shadow:0 0 6px #22c55e; }
   .container { padding:20px; max-width:1100px; margin:0 auto; }
@@ -145,6 +147,8 @@ function dashboardHTML() {
   <div class="controls">
     <div class="field"><label for="engine">Extraction engine</label><select id="engine"></select></div>
     <div class="field"><label for="model">File-input model</label><select id="model"></select></div>
+    <div class="field"><label>&nbsp;</label><button id="collapseAll" class="btn">Collapse all</button></div>
+    <div class="field"><label>&nbsp;</label><button id="expandAll" class="btn">Expand all</button></div>
   </div>
 </div>
 <div class="container"><div id="jobs"><div class="empty">Waiting for jobs… enqueue one (e.g. via Postman) to watch it process here.</div></div></div>
@@ -167,6 +171,12 @@ engineSel.addEventListener('change', () =>
   fetch('/engine', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: engineSel.value }) }));
 modelSel.addEventListener('change', () =>
   fetch('/model', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: modelSel.value }) }));
+
+// ── Collapse / expand all job cards ──────────────────────────────────────────
+document.getElementById('collapseAll').addEventListener('click', () =>
+  jobsEl.querySelectorAll('.job').forEach((el) => el.classList.add('collapsed')));
+document.getElementById('expandAll').addEventListener('click', () =>
+  jobsEl.querySelectorAll('.job').forEach((el) => el.classList.remove('collapsed')));
 
 // ── History replay (from saved test/*.json) then live SSE ────────────────────
 const dot = document.getElementById('dot'), conn = document.getElementById('conn');
