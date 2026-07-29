@@ -3,7 +3,7 @@ import unzipper from 'unzipper';
 // ── Extraction engine — keep exactly ONE of these uncommented ────────────────
 // Both expose the same `extractPatientFromPdfUrls(urls)` method, so switching is
 // just a matter of toggling the comment below — no other code changes needed.
-import openaiClientService from '../services/openai-client.service.js'; // ACTIVE: gpt-5.5 file input; flattens table pages to images
+import openaiClientService from '../services/openai-client.service.js'; // ACTIVE: gpt-5.5 — digital: text + form-page images; fax: file input
 // import openaiClientService from '../services/openai-client.service2.js'; // ALT: Mistral OCR → GPT-4o-mini (uncomment this + comment the line above)
 // ─────────────────────────────────────────────────────────────────────────────
 import contentExtractorService from '../services/content-extractor.service.js';

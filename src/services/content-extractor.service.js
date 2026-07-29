@@ -215,6 +215,7 @@ class ContentExtractorService {
       const loadingTask = pdfjsLib.getDocument({
         data: uint8Array,
         useSystemFonts: true,
+        verbosity: pdfjsLib.VerbosityLevel.ERRORS, // silence benign pdfjs warnings
       });
       
       const pdfDocument = await loadingTask.promise;
