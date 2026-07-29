@@ -7,11 +7,11 @@
  *
  * Default can be set via EXTRACTION_ENGINE env var ('gpt-5.5' | 'mistral').
  */
-import openaiClientService from './openai-client.service.js'; // gpt-5.5 file input; flattens table pages to images
+import openaiClientService from './openai-client.service.js'; // gpt-5.5: digital→text+form images, fax→file input
 import openaiClientService2 from './openai-client.service2.js'; // Mistral OCR → GPT-4o-mini
 
 const ENGINES = {
-  'gpt-5.5': { label: 'gpt-5.5 — file input (table pages flattened to images)', service: openaiClientService },
+  'gpt-5.5': { label: 'gpt-5.5 — digital: text + form images · fax: file input', service: openaiClientService },
   mistral: { label: 'Mistral OCR → GPT-4o-mini', service: openaiClientService2 },
 };
 

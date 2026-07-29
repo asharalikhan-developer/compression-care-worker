@@ -1,18 +1,17 @@
-import OpenAI, { toFile } from 'openai';
+import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { pdf as renderPdf } from 'pdf-to-img';
-import { PDFDocument } from 'pdf-lib';
 import config from '../config/index.js';
 import { logCost } from '../utils/openai-cost.js';
 import { getFileInputModel } from './runtime-settings.js';
 
-// ── Table-page detection (tune on real documents) ─────────────────────────────
-// A digital page that draws this many vector path/line ops is almost certainly a
-// table/form grid; a page carrying interactive form fields (checkboxes) is too.
-// Such pages are flattened to a raster image so gpt-5.5 sees exactly what a human
-// sees (filled vs empty boxes) rather than relying on the vector/AcroForm layer.
-const TABLE_PATH_OPS_THRESHOLD = 60;
-// Scale at which table pages are rasterized (higher = sharper, larger payload).
+// ── Document routing (one request mixes both input types) ─────────────────────
+// A page needs at least this many non-space chars to count as having a usable
+// text layer. A PDF where NO page clears this bar is treated as scanned/fax and
+// sent as FILE input; otherwise it is digital → its text layer is sent as text
+// and only its form/checkbox pages (AcroForm widgets) are rendered to images.
+const MIN_PAGE_TEXT_CHARS = 15;
+// Scale at which digital form pages are rasterized (higher = sharper checkboxes).
 const RENDER_SCALE = 3;
 
 class OpenAIClientService {
@@ -41,19 +40,35 @@ class OpenAIClientService {
     }
 
     const systemPrompt = this.buildSystemPrompt();
-    const userPrompt = this.buildUserPrompt(pdfUrls.length);
 
-    // For each PDF: if it has table/checkbox pages, rebuild it with those pages
-    // flattened to images and send the rebuilt bytes (uploaded → file_id).
-    // Otherwise send the original Cloudinary URL untouched (file_url).
+    // Build ONE request that mixes both input types across all PDFs:
+    //   • digital PDF → its text layer (input_text) + images of its form/
+    //     checkbox pages (input_image)
+    //   • scanned/fax PDF (no text layer) → the whole file (input_file / file_url)
+    const textSections = [];
+    const imageBlocks = [];
     const fileBlocks = [];
-    for (const url of pdfUrls) {
-      fileBlocks.push(await this.#buildFileBlock(url));
+    let digitalCount = 0;
+    let faxCount = 0;
+
+    for (let i = 0; i < pdfUrls.length; i++) {
+      const doc = await this.#buildDocInput(pdfUrls[i], i + 1);
+      if (doc.textSection) textSections.push(doc.textSection);
+      for (const dataUri of doc.images) imageBlocks.push({ type: 'input_image', image_url: dataUri });
+      if (doc.fileBlock) fileBlocks.push(doc.fileBlock);
+      if (doc.kind === 'fax') faxCount++;
+      else digitalCount++;
     }
 
+    const userPrompt = this.buildUserPrompt(pdfUrls.length, digitalCount, faxCount);
+    const textBlob = textSections.length
+      ? `\n\nEXTRACTED TEXT OF DIGITAL DOCUMENT(S):\n\n${textSections.join('\n\n')}`
+      : '';
+
     const content = [
-      { type: 'input_text', text: `${systemPrompt}\n\n${userPrompt}` },
-      ...fileBlocks,
+      { type: 'input_text', text: `${systemPrompt}\n\n${userPrompt}${textBlob}` },
+      ...imageBlocks, // digital form pages
+      ...fileBlocks, // scanned/fax whole files
     ];
 
     const model = getFileInputModel() || config.openai.gpt5model;
@@ -64,7 +79,8 @@ class OpenAIClientService {
       });
 
       logCost(
-        `Client PDF extraction (${pdfUrls.length} file${pdfUrls.length === 1 ? '' : 's'})`,
+        `Client PDF extraction (${pdfUrls.length} file${pdfUrls.length === 1 ? '' : 's'}: ` +
+          `${digitalCount} digital + ${faxCount} fax, ${imageBlocks.length} image${imageBlocks.length === 1 ? '' : 's'})`,
         model,
         response.usage,
       );
@@ -80,13 +96,15 @@ class OpenAIClientService {
   }
 
   /**
-   * Decide how a single PDF reaches gpt-5.5:
-   *  • no table pages → reuse the original Cloudinary URL ({ file_url })
-   *  • has table pages → flatten those pages to images, upload the rebuilt PDF,
-   *    and reference it by id ({ file_id })
-   * On any failure we degrade gracefully to the original URL so extraction still runs.
+   * Classify one PDF and turn it into model input for the shared request:
+   *   • fax / fully scanned (no text layer) → { kind:'fax', fileBlock:{ input_file, file_url } }
+   *   • digital (has a text layer)          → { kind:'digital', textSection, images[] }
+   *       text  = every page's text layer (exact typed content, cheap tokens)
+   *       images = only the form/checkbox pages (AcroForm widgets), rendered so
+   *                gpt-5.5 can read what is ticked
+   * On any parse failure, degrade to sending the raw file (file_url).
    */
-  async #buildFileBlock(url) {
+  async #buildDocInput(url, docNo) {
     const filename = (() => {
       try { return new URL(url).pathname.split('/').pop() || 'document.pdf'; }
       catch { return 'document.pdf'; }
@@ -94,97 +112,79 @@ class OpenAIClientService {
 
     try {
       const buffer = Buffer.from(await (await fetch(url)).arrayBuffer());
-      const tablePages = await this.#detectTablePages(buffer);
-      if (tablePages.length === 0) {
-        return { type: 'input_file', file_url: url };
+      const pages = await this.#analyzePages(buffer); // [{ n, text, widgets }]
+      const hasTextLayer = pages.some(
+        (p) => p.text.replace(/\s/g, '').length >= MIN_PAGE_TEXT_CHARS,
+      );
+
+      // No usable text anywhere → scanned/fax → let gpt-5.5 read the whole file.
+      if (!hasTextLayer) {
+        console.log(`  📠 ${filename}: scanned/fax → file input`);
+        return { kind: 'fax', images: [], fileBlock: { type: 'input_file', file_url: url } };
       }
 
-      console.log(`  🗂️  ${filename}: flattening table page(s) ${tablePages.join(', ')} to image(s)`);
-      const flattened = await this.#flattenTablePages(buffer, tablePages);
-      const file = await this.client.files.create({
-        file: await toFile(flattened, filename, { type: 'application/pdf' }),
-        purpose: 'user_data',
-      });
-      return { type: 'input_file', file_id: file.id };
+      // Digital → text for every page + images of the form/checkbox pages only.
+      const formPages = pages.filter((p) => p.widgets > 0).map((p) => p.n);
+      const formSet = new Set(formPages);
+      const images = [];
+      if (formPages.length > 0) {
+        console.log(`  🗂️  ${filename}: digital, imaging form page(s) ${formPages.join(', ')}`);
+        const rendered = await renderPdf(buffer, {
+          scale: RENDER_SCALE,
+          docInitParams: { verbosity: pdfjsLib.VerbosityLevel.ERRORS }, // silence benign pdfjs warnings
+        });
+        let n = 0;
+        for await (const png of rendered) {
+          n++;
+          if (formSet.has(n)) images.push(`data:image/png;base64,${png.toString('base64')}`);
+        }
+      } else {
+        console.log(`  📄 ${filename}: digital, text only (no form pages)`);
+      }
+
+      const body = pages
+        .map((p) => `--- Page ${p.n}${formSet.has(p.n) ? ' (form image attached)' : ''} ---\n${p.text || '(no text)'}`)
+        .join('\n\n');
+      return {
+        kind: 'digital',
+        textSection: `===== DOCUMENT ${docNo}: ${filename} =====\n${body}`,
+        images,
+      };
     } catch (err) {
-      console.warn(`  ⚠️ Flatten failed for ${filename} (${err.message}); sending original URL`);
-      return { type: 'input_file', file_url: url };
+      console.warn(`  ⚠️ Could not parse ${filename} (${err.message}); sending raw file URL`);
+      return { kind: 'fax', images: [], fileBlock: { type: 'input_file', file_url: url } };
     }
   }
 
-  /** Return the 1-based page numbers that look like tables/checkbox forms. */
-  async #detectTablePages(buffer) {
+  /**
+   * Per page: pull the text layer and count AcroForm widgets.
+   * @returns {Promise<Array<{ n:number, text:string, widgets:number }>>}
+   */
+  async #analyzePages(buffer) {
     const doc = await pdfjsLib.getDocument({
       data: new Uint8Array(buffer),
       useSystemFonts: true,
       verbosity: pdfjsLib.VerbosityLevel.ERRORS, // silence benign pdfjs warnings
     }).promise;
 
-    const OPS = pdfjsLib.OPS;
-    const tablePages = [];
-
+    const pages = [];
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
 
-      let pathOps = 0;
-      try {
-        const opList = await page.getOperatorList();
-        for (const fn of opList.fnArray) {
-          if (
-            fn === OPS.constructPath ||
-            fn === OPS.stroke ||
-            fn === OPS.fill ||
-            fn === OPS.eoFill ||
-            fn === OPS.fillStroke
-          ) {
-            pathOps++;
-          }
-        }
-      } catch { /* best-effort */ }
+      const tc = await page.getTextContent();
+      const text = tc.items.map((it) => it.str).join(' ').replace(/[ \t]+/g, ' ').trim();
 
-      let widgetCount = 0;
+      let widgets = 0;
       try {
         const annots = await page.getAnnotations();
-        widgetCount = annots.filter((a) => a.subtype === 'Widget').length;
+        widgets = annots.filter((a) => a.subtype === 'Widget').length;
       } catch { /* best-effort */ }
 
-      if (pathOps >= TABLE_PATH_OPS_THRESHOLD || widgetCount > 0) tablePages.push(n);
+      pages.push({ n, text, widgets });
     }
 
     if (typeof doc.cleanup === 'function') await doc.cleanup();
-    return tablePages;
-  }
-
-  /**
-   * Rebuild the PDF: table pages become rasterized image pages (so checkbox
-   * state is baked into pixels), all other pages are copied through unchanged.
-   * @returns {Promise<Buffer>} the rebuilt PDF bytes
-   */
-  async #flattenTablePages(buffer, tablePages) {
-    const tableSet = new Set(tablePages);
-    const srcDoc = await PDFDocument.load(buffer);
-    const outDoc = await PDFDocument.create();
-    const rendered = await renderPdf(buffer, {
-      scale: RENDER_SCALE,
-      docInitParams: { verbosity: pdfjsLib.VerbosityLevel.ERRORS }, // silence benign pdfjs warnings
-    });
-
-    for (let i = 0; i < srcDoc.getPageCount(); i++) {
-      const pageNum = i + 1;
-      if (tableSet.has(pageNum)) {
-        const { width, height } = srcDoc.getPage(i).getSize();
-        const png = await rendered.getPage(pageNum); // Buffer (PNG)
-        const img = await outDoc.embedPng(png);
-        const page = outDoc.addPage([width, height]);
-        page.drawImage(img, { x: 0, y: 0, width, height });
-      } else {
-        const [copied] = await outDoc.copyPages(srcDoc, [i]);
-        outDoc.addPage(copied);
-      }
-    }
-
-    const bytes = await outDoc.save();
-    return Buffer.from(bytes);
+    return pages;
   }
 
   buildSystemPrompt() {
@@ -263,11 +263,28 @@ Rules:
 9. Always return valid JSON matching the schema above. No commentary, no markdown, JSON only.`;
   }
 
-  buildUserPrompt(fileCount = 1) {
-    if (fileCount <= 1) {
-      return `The attached PDF is the source document. Read all pages, including any handwritten or scanned content, and extract the patient information per the system instructions. Return JSON only.`;
+  buildUserPrompt(fileCount = 1, digitalCount = 0, faxCount = 0) {
+    const parts = [];
+    parts.push(
+      fileCount <= 1
+        ? 'You are given ONE source document.'
+        : `You are given ${fileCount} source documents — they ALL belong to the SAME single patient. Merge every detail across them into ONE patient object.`,
+    );
+    if (digitalCount > 0) {
+      parts.push(
+        'For DIGITAL documents you are given their extracted TEXT (below) plus IMAGES of their ' +
+          'form/checkbox pages. Use the TEXT for typed fields (names, dates, insurance, addresses) ' +
+          'and the IMAGES to read which checkboxes/options are actually marked and any handwritten ' +
+          'values. Where the text and the image disagree on a checkbox, TRUST THE IMAGE.',
+      );
     }
-    return `${fileCount} PDFs are attached. They all belong to the SAME single patient. Read every page of every file (including handwritten or scanned content), merge all patient information across the files into ONE patient object, and extract per the system instructions. Return JSON only.`;
+    if (faxCount > 0) {
+      parts.push(
+        'Scanned/fax documents are attached as FILES — read every page of them directly, including handwritten content.',
+      );
+    }
+    parts.push('Extract per the system instructions. Return JSON only.');
+    return parts.join(' ');
   }
 }
 
