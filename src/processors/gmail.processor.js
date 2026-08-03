@@ -1,14 +1,14 @@
 import gmailService from '../services/gmail.service.js';
 import contentExtractorService from '../services/content-extractor.service.js';
 import openaiService from '../services/openai.service.js';
-import cloudinaryService from '../services/cloudinary.service.js';
+import s3Service from '../services/s3.service.js';
 
 const PROCESSED_EMAILS_KEY = 'processed-email-ids';
 
 async function init() {
   await gmailService.initialize();
   openaiService.initialize();
-  cloudinaryService.initialize();
+  s3Service.initialize();
 }
 
 async function processEmail(email) {
@@ -26,7 +26,7 @@ async function processEmail(email) {
   if (faxes.length) console.log(`  📠 Fax PDFs: ${faxes.map((f) => f.filename).join(', ')}`);
 
   if (faxes.length) {
-    console.log(`  ☁️  Uploaded ${faxes.length} fax PDF(s) to Cloudinary`);
+    console.log(`  ☁️  Uploaded ${faxes.length} fax PDF(s) to S3`);
     for (const f of faxes) console.log(`     🔗 ${f.url}`);
   }
 

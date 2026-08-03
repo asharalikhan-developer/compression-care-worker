@@ -35,6 +35,15 @@ export const config = {
     apiKey: process.env.CLOUDINARY_API_KEY,
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
+  s3: {
+    region: process.env.AWS_REGION,
+    bucket: process.env.AWS_S3_BUCKET,
+    // Optional: omit on EC2 to use the IAM instance role / default cred chain.
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    // Presigned GET URL lifetime — must outlive the OpenAI extraction call.
+    presignExpirySeconds: parseInt(process.env.S3_PRESIGN_EXPIRY_SECONDS) || 3600,
+  },
   redis: {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT) || 6379,
@@ -50,6 +59,11 @@ export const config = {
     uri: process.env.MONGODB_URI,
     db: process.env.MONGODB_DB,
     collection: process.env.MONGODB_COLLECTION ,
+  },
+  client: {
+    // Webhook the processed patient payload is POSTed to (client.processor).
+    webhookUrl: process.env.CLIENT_URL,
+    webhookTimeoutMs: parseInt(process.env.CLIENT_URL_TIMEOUT_MS) || 15000,
   },
   processors: (process.env.PROCESSORS || 'gmail,client')
     .split(',')

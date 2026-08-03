@@ -55,7 +55,9 @@ async function getSession() {
       );
     }
     const t0 = Date.now();
-    _session = await ort.InferenceSession.create(MODEL_PATH);
+    // logSeverityLevel 3 = ERROR: drops onnxruntime's benign WARNING noise
+    // (e.g. "Removing initializer ... not used by any node") on session load.
+    _session = await ort.InferenceSession.create(MODEL_PATH, { logSeverityLevel: 3 });
     _inputName = _session.inputNames[0];
     _outputName = _session.outputNames[0];
     console.log(`✅ PP-LCNet ONNX session loaded in ${Date.now() - t0}ms (singleton)`);

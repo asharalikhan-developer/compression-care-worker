@@ -5,7 +5,7 @@ import Tesseract from 'tesseract.js';
 import sharp from 'sharp';
 import XLSX from "xlsx";
 
-import cloudinaryService from './cloudinary.service.js';
+import s3Service from './s3.service.js';
 import fixPdfOrientationBuffer from '../scripts/fixPdfOrientationBuffer.js';
 
 
@@ -120,7 +120,7 @@ class ContentExtractorService {
       const text = await this.extractFromPdf(data);
 
       if (!text || text.trim().length === 0) {
-        console.log('  📸 PDF appears to be fully scanned/image-based, fixing orientation and uploading to Cloudinary');
+        console.log('  📸 PDF appears to be fully scanned/image-based, fixing orientation and uploading to S3');
         // Fix orientation before upload
         let fixedBuffer;
         try {
@@ -129,7 +129,7 @@ class ContentExtractorService {
           console.error('  ⚠️ Error fixing PDF orientation, uploading original:', err.message);
           fixedBuffer = data;
         }
-        const pdfUrl = await cloudinaryService.uploadPdf(fixedBuffer, filename);
+        const pdfUrl = await s3Service.uploadPdf(fixedBuffer, filename);
         return {
           type: 'fax',
           data: pdfUrl,

@@ -7,15 +7,16 @@ import openaiClientService from '../services/openai-client.service.js'; // ACTIV
 // import openaiClientService from '../services/openai-client.service2.js'; // ALT: Mistral OCR → GPT-4o-mini (uncomment this + comment the line above)
 // ─────────────────────────────────────────────────────────────────────────────
 import contentExtractorService from '../services/content-extractor.service.js';
-import cloudinaryService from '../services/cloudinary.service.js';
+import s3Service from '../services/s3.service.js';
 import fixPdfOrientationBuffer from '../scripts/fixPdfOrientationBuffer.js';
+import config from '../config/index.js';
 
 const STAGES = {
   DOWNLOAD: 'download',
   DETECT: 'detect',
   UNZIP: 'unzip',
   PREPROCESS: 'preprocess',
-  CLOUDINARY: 'cloudinary',
+  UPLOAD: 'upload',
   OPENAI: 'openai',
   MONGO: 'mongo',
 };
@@ -46,7 +47,7 @@ async function withStage(stage, code, fn) {
 
 async function init() {
   openaiClientService.initialize();
-  cloudinaryService.initialize();
+  s3Service.initialize();
 }
 
 function filenameFromUrl(url, fallback = 'document.pdf') {
@@ -109,13 +110,49 @@ async function preprocessPdf(buffer, filename) {
 
 async function cleanupAssets(uploadedAssets) {
   if (!uploadedAssets.length) return;
-  console.log(`  🧹 Cleaning up ${uploadedAssets.length} Cloudinary asset(s)...`);
+  console.log(`  🧹 Cleaning up ${uploadedAssets.length} S3 asset(s)...`);
   for (const asset of uploadedAssets) {
     try {
-      await cloudinaryService.deleteFile(asset.publicId);
+      await s3Service.deleteFile(asset.publicId);
     } catch (err) {
       console.warn(`    ⚠️ Cleanup failed for ${asset.publicId}:`, err?.message || err);
     }
+  }
+}
+
+/**
+ * POST the processed patient payload to the client's webhook (CLIENT_URL).
+ * Best-effort: returns true on a 2xx, false on any failure. The caller persists
+ * to Mongo regardless and records `notified` so undelivered docs stay findable.
+ */
+async function notifyClient(uniqueId, patient) {
+  const url = config.client.webhookUrl;
+  if (!url) {
+    console.warn('  ⚠️ CLIENT_URL not set — skipping client notification');
+    return false;
+  }
+  const payload = { uniqueId, status: 'processed', data: patient };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.client.webhookTimeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      console.warn(`  ⚠️ Client webhook ${url} returned ${res.status} ${res.statusText} — flagging notified:false`);
+      return false;
+    }
+    console.log(`  📡 Notified client ${url} → ${res.status}`);
+    return true;
+  } catch (err) {
+    const reason = err.name === 'AbortError' ? 'timeout' : err?.message || String(err);
+    console.warn(`  ⚠️ Client webhook POST failed (${reason}) — flagging notified:false`);
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -179,23 +216,23 @@ async function handle(job, deps) {
         () => preprocessPdf(pdf.buffer, pdf.filename),
       );
       const { url, publicId } = await withStage(
-        STAGES.CLOUDINARY, 'CLOUDINARY_UPLOAD_FAILED',
-        () => cloudinaryService.uploadPdfWithMeta(uploadBuffer, pdf.filename),
+        STAGES.UPLOAD, 'S3_UPLOAD_FAILED',
+        () => s3Service.uploadPdfWithMeta(uploadBuffer, pdf.filename),
       );
       uploadedAssets.push({ url, publicId });
     }
     console.log(`  ⏱️ Preprocess + upload: ${Date.now() - tPrep}ms`);
     uploadedAssets.forEach((a) => console.log(`   ☁️  ${a.url}`));
 
-    const cloudinaryUrls = uploadedAssets.map((a) => a.url);
-    console.log(`  🤖 Analyzing ${cloudinaryUrls.length} PDF(s) via gpt-5.5 (table pages flattened to images)...`);
-    // console.log(`  🤖 Analyzing ${cloudinaryUrls.length} PDF(s) via Mistral OCR → GPT-4o-mini...`); // service2 log
+    const pdfUrls = uploadedAssets.map((a) => a.url);
+    console.log(`  🤖 Analyzing ${pdfUrls.length} PDF(s) via gpt-5.5 (digital: text + form-page images; fax: file input)...`);
+    // console.log(`  🤖 Analyzing ${pdfUrls.length} PDF(s) via Mistral OCR → GPT-4o-mini...`); // service2 log
     const tAI = Date.now();
     // Same call for both engines — toggle which one runs by switching the import at
     // the top of the file (service.js ⇄ service2.js). No change needed on this line.
     const patientResult = await withStage(
       STAGES.OPENAI, 'OPENAI_ERROR',
-      () => openaiClientService.extractPatientFromPdfUrls(cloudinaryUrls),
+      () => openaiClientService.extractPatientFromPdfUrls(pdfUrls),
     );
     console.log(`  ⏱️ Extraction: ${Date.now() - tAI}ms`);
 
@@ -205,10 +242,14 @@ async function handle(job, deps) {
       });
     }
 
-    patientResult.patient.file_url = cloudinaryUrls;
+    patientResult.patient.file_url = pdfUrls;
     if (typeof patientResult.patient.confidence_score === 'number') {
       console.log(`  🧠 AI self-rated confidence: ${patientResult.patient.confidence_score}/100`);
     }
+
+    // Notify the client webhook before persisting. Best-effort: a failed POST is
+    // recorded as notified:false (not a job failure) so we never re-run OpenAI.
+    const notified = await notifyClient(uniqueId, patientResult.patient);
 
     const updateRes = await withStage(
       STAGES.MONGO, 'MONGO_UPDATE_FAILED',
@@ -220,6 +261,8 @@ async function handle(job, deps) {
             status: 'processed',
             processedAt: new Date().toISOString(),
             attemptsMade: attemptNumber,
+            notified,
+            notifiedAt: notified ? new Date().toISOString() : null,
             error: null,
           },
         },
